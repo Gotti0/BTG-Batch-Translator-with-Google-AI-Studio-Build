@@ -29,6 +29,7 @@ export function useTranslation() {
     updateProgress,
     setResults,
     addResult,
+    updateResult,
     setTranslatedText,
     addLog,
     restoreSession,
@@ -70,6 +71,10 @@ export function useTranslation() {
       return;
     }
 
+    // results 변수는 클로저에 의해 캡처된 상태이므로 startTranslation() 호출 전의 값을 가집니다.
+    // 따라서 resume 기능을 위한 기존 결과를 여기서 확보할 수 있습니다.
+    const existingResults = results.length > 0 ? results : undefined;
+
     isTranslatingRef.current = true;
     startTranslation();
 
@@ -87,13 +92,20 @@ export function useTranslation() {
         updateProgress(progress);
       };
 
-      // 기존 결과 (이어하기인 경우)
-      const existingResults = results.length > 0 ? results : undefined;
+      // 실시간 결과 콜백
+      const onResult = (result: TranslationResult) => {
+        addResult(result);
+      };
 
       // 번역 실행
-      const translationResults = await service.translateText(fullText, onProgress, existingResults);
+      const translationResults = await service.translateText(
+        fullText, 
+        onProgress, 
+        existingResults,
+        onResult
+      );
 
-      // 결과 저장
+      // 결과 저장 (최종 동기화 보장)
       setResults(translationResults);
 
       // 결과 텍스트 합치기
@@ -135,6 +147,7 @@ export function useTranslation() {
     stopTranslation,
     updateProgress,
     setResults,
+    addResult,
     setTranslatedText,
     addLog,
   ]);
@@ -170,19 +183,17 @@ export function useTranslation() {
       
       const retriedResults = await service.retryFailedChunks(
         results,
-        (progress) => updateProgress(progress)
+        (progress) => updateProgress(progress),
+        (result) => {
+          updateResult(result.chunkIndex, result);
+        }
       );
 
-      // 결과 업데이트
-      const updatedResults = results.map(r => {
-        const retried = retriedResults.find(rr => rr.chunkIndex === r.chunkIndex);
-        return retried || r;
-      });
-
-      setResults(updatedResults);
+      // 결과 업데이트 (최종 동기화)
+      setResults(retriedResults);
       
       // 텍스트 재합성
-      const combinedText = TranslationService.combineResults(updatedResults);
+      const combinedText = TranslationService.combineResults(retriedResults);
       setTranslatedText(combinedText);
 
       const newSuccessCount = retriedResults.filter(r => r.success).length;
@@ -194,7 +205,7 @@ export function useTranslation() {
     } finally {
       isTranslatingRef.current = false;
     }
-  }, [results, getOrCreateService, updateProgress, setResults, setTranslatedText, addLog]);
+  }, [results, getOrCreateService, updateProgress, setResults, updateResult, setTranslatedText, addLog]);
 
   // 결과 다운로드
   const downloadResult = useCallback((filename?: string) => {
@@ -335,9 +346,6 @@ export function useTranslation() {
           successfulCount++;
         } else {
           // 결과가 없는 경우 (미번역) - 나중에 번역될 때 채워짐
-          // TranslationStore의 results 배열은 번역된 것만 넣거나, 
-          // 진행 중 상태를 위해 빈 객체를 넣을 수도 있으나,
-          // 여기서는 '완료된 것'만 복구하고 나머지는 번역 실행 시 처리하도록 함.
         }
       });
 

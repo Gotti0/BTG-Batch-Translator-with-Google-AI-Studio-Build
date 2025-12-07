@@ -69,6 +69,7 @@ export class TranslationService {
   private glossaryEntries: GlossaryEntry[] = [];
   private stopRequested: boolean = false;
   private onLog?: LogCallback;
+  private cancelCurrentRequest?: () => void;
 
   constructor(config: AppConfig, apiKey?: string) {
     this.config = config;
@@ -117,6 +118,12 @@ export class TranslationService {
   requestStop(): void {
     this.stopRequested = true;
     this.log('warning', '번역 중단이 요청되었습니다.');
+    
+    // 현재 대기 중인 요청이 있다면 강제 취소 (Promise.race 트리거)
+    if (this.cancelCurrentRequest) {
+      this.cancelCurrentRequest();
+      this.cancelCurrentRequest = undefined;
+    }
   }
 
   /**
@@ -124,6 +131,7 @@ export class TranslationService {
    */
   resetStop(): void {
     this.stopRequested = false;
+    this.cancelCurrentRequest = undefined;
   }
 
   /**
@@ -173,18 +181,24 @@ export class TranslationService {
       topP: this.config.topP,
     };
 
+    // 취소 프로미스 생성
+    const cancelPromise = new Promise<string>((_, reject) => {
+      this.cancelCurrentRequest = () => {
+        reject(new Error('CANCELLED_BY_USER'));
+      };
+    });
+
     try {
-      let translatedText: string;
+      let apiPromise: Promise<string>;
 
       if (this.config.enablePrefillTranslation) {
         // 채팅 모드 (프리필 대체)
-        // PrefillHistoryItem을 ChatMessage 형식으로 변환
         const chatHistory = this.config.prefillCachedHistory.map(item => ({
           role: item.role,
           content: item.parts.join('\n'),
         }));
         
-        translatedText = await this.geminiClient.generateWithChat(
+        apiPromise = this.geminiClient.generateWithChat(
           prompt,
           this.config.prefillSystemInstruction,
           chatHistory,
@@ -193,13 +207,19 @@ export class TranslationService {
         );
       } else {
         // 일반 모드
-        translatedText = await this.geminiClient.generateText(
+        apiPromise = this.geminiClient.generateText(
           prompt,
           this.config.modelName,
           undefined,
           generationConfig
         );
       }
+
+      // API 호출과 취소 요청 경합
+      const translatedText = await Promise.race([apiPromise, cancelPromise]);
+      
+      // 완료 후 취소 핸들러 정리
+      this.cancelCurrentRequest = undefined;
 
       this.log('info', `청크 ${chunkIndex + 1} 번역 완료 (${translatedText.length}자)`);
 
@@ -210,7 +230,21 @@ export class TranslationService {
         success: true,
       };
     } catch (error) {
+      this.cancelCurrentRequest = undefined;
       const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // 사용자 중단 처리
+      if (errorMessage === 'CANCELLED_BY_USER') {
+        this.log('warning', `청크 ${chunkIndex + 1} 번역 중단됨 (사용자 요청)`);
+        return {
+          chunkIndex,
+          originalText: chunkText,
+          translatedText: '',
+          success: false,
+          error: '사용자 중단',
+        };
+      }
+
       this.log('error', `청크 ${chunkIndex + 1} 번역 실패: ${errorMessage}`);
 
       // 콘텐츠 안전 재시도
@@ -290,6 +324,13 @@ export class TranslationService {
 
       try {
         const result = await this.translateChunk(subChunks[i], originalIndex);
+        
+        // 중요: 청크 번역 후 중단 상태 재확인 (재귀적 취소 전파를 위해)
+        if (this.stopRequested) {
+            translatedParts.push('[중단됨]');
+            break;
+        }
+
         if (result.success) {
           translatedParts.push(result.translatedText);
         } else {
@@ -325,11 +366,13 @@ export class TranslationService {
    * @param fullText - 전체 원문 텍스트
    * @param onProgress - 진행률 콜백
    * @param existingResults - (옵션) 이미 번역된 결과. 제공되면 해당 청크는 스킵합니다.
+   * @param onResult - (옵션) 개별 청크 번역 완료 시 호출될 콜백 (실시간 업데이트용)
    */
   async translateText(
     fullText: string,
     onProgress?: ProgressCallback,
-    existingResults?: TranslationResult[]
+    existingResults?: TranslationResult[],
+    onResult?: (result: TranslationResult) => void
   ): Promise<TranslationResult[]> {
     this.stopRequested = false;
 
@@ -360,18 +403,8 @@ export class TranslationService {
       currentStatusMessage: '번역 시작...',
     };
 
-    // 초기 상태 반영 (이미 완료된 청크들 카운트)
-    if (existingMap.size > 0) {
-      for (let i = 0; i < chunks.length; i++) {
-        if (existingMap.has(i)) {
-          progress.processedChunks++;
-          progress.successfulChunks++;
-        }
-      }
-      onProgress?.(progress);
-    } else {
-      onProgress?.(progress);
-    }
+    // 초기 상태 보고
+    onProgress?.(progress);
 
     for (let i = 0; i < chunks.length; i++) {
       // 중단 체크
@@ -382,13 +415,22 @@ export class TranslationService {
         break;
       }
 
-      // 이미 번역된 청크인지 확인
+      // 1. 이미 번역된 청크 처리 (기존 결과 활용)
       if (existingMap.has(i)) {
         const existingResult = existingMap.get(i)!;
         
         // 원문 텍스트가 변경되었는지 확인 (옵션)
         if (existingResult.originalText.length === chunks[i].length) {
           results.push(existingResult);
+          
+          // [중요] 기존 결과도 실시간 반영을 위해 콜백 호출
+          onResult?.(existingResult);
+
+          // 진행률 업데이트
+          progress.processedChunks++;
+          progress.successfulChunks++;
+          onProgress?.(progress);
+
           this.log('debug', `청크 ${i + 1} 스킵 (이미 완료됨)`);
           continue;
         } else {
@@ -396,14 +438,23 @@ export class TranslationService {
         }
       }
 
-      // 진행 상황 업데이트
+      // 2. 새로운 번역 실행
       progress.currentStatusMessage = `청크 ${i + 1}/${chunks.length} 번역 중...`;
       progress.currentChunkProcessing = i;
       onProgress?.(progress);
 
-      // 번역 실행
       const result = await this.translateChunk(chunks[i], i);
+      
+      // 중단 시 결과 추가 안함 (선택사항, 여기서는 실패로라도 추가하거나 중단 처리)
+      if (this.stopRequested) {
+          // 중단된 결과도 추가할지 여부는 정책에 따름. 
+          // 여기서는 성공한 결과만 유효하므로 추가하되 실패 상태로 둠.
+      }
+
       results.push(result);
+      
+      // [중요] 번역 결과 실시간 전송
+      onResult?.(result);
 
       // 결과 반영
       progress.processedChunks++;
@@ -439,10 +490,15 @@ export class TranslationService {
 
   /**
    * 실패한 청크만 재번역
+   * 
+   * @param results - 전체 번역 결과
+   * @param onProgress - 진행률 콜백
+   * @param onResult - (옵션) 실시간 업데이트를 위한 콜백
    */
   async retryFailedChunks(
     results: TranslationResult[],
-    onProgress?: ProgressCallback
+    onProgress?: ProgressCallback,
+    onResult?: (result: TranslationResult) => void
   ): Promise<TranslationResult[]> {
     const failedResults = results.filter(r => !r.success);
     
@@ -482,6 +538,9 @@ export class TranslationService {
       if (index >= 0) {
         updatedResults[index] = newResult;
       }
+
+      // [중요] 재번역 결과 실시간 전송
+      onResult?.(newResult);
 
       progress.processedChunks++;
       if (newResult.success) {
