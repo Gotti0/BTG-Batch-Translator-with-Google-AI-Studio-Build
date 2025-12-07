@@ -3,12 +3,13 @@
 // 설정 및 번역 페이지
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { Play, Square, Save, Upload, Settings, Zap, Download, RefreshCw } from 'lucide-react';
+import { Play, Square, Save, Upload, Settings, Zap, Download, RefreshCw, RotateCcw } from 'lucide-react';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTranslationStore } from '../stores/translationStore';
 import { useTranslation } from '../hooks/useTranslation';
 import { FileHandler } from '../utils/fileHandler';
 import { getGeminiClient } from '../services/GeminiClient';
+import { DEFAULT_PREFILL_SYSTEM_INSTRUCTION, DEFAULT_PREFILL_CACHED_HISTORY } from '../types/config';
 import { 
   Button, 
   Select, 
@@ -97,6 +98,100 @@ function FileUploadSection() {
 }
 
 /**
+ * 프리필 설정 에디터 컴포넌트
+ */
+function PrefillSettingsEditor() {
+  const { config, updateConfig } = useSettingsStore();
+
+  // 히스토리 파싱 헬퍼
+  const getHistoryPart = (role: 'user' | 'model'): string => {
+    const item = config.prefillCachedHistory.find(h => h.role === role);
+    return item?.parts[0] || '';
+  };
+
+  // 히스토리 업데이트 헬퍼
+  const updateHistory = (role: 'user' | 'model', text: string) => {
+    const currentHistory = [...config.prefillCachedHistory];
+    
+    // 기존 구조 유지하면서 내용만 업데이트 (없으면 생성)
+    const userIndex = currentHistory.findIndex(h => h.role === 'user');
+    const modelIndex = currentHistory.findIndex(h => h.role === 'model');
+
+    const newUserPart = role === 'user' ? text : (userIndex >= 0 ? currentHistory[userIndex].parts[0] : '');
+    const newModelPart = role === 'model' ? text : (modelIndex >= 0 ? currentHistory[modelIndex].parts[0] : '');
+
+    const newHistory = [
+      { role: 'user' as const, parts: [newUserPart] },
+      { role: 'model' as const, parts: [newModelPart] }
+    ];
+
+    updateConfig({ prefillCachedHistory: newHistory });
+  };
+
+  const handleResetDefaults = () => {
+    if (confirm('프리필 설정을 기본값으로 초기화하시겠습니까?')) {
+      updateConfig({
+        prefillSystemInstruction: DEFAULT_PREFILL_SYSTEM_INSTRUCTION,
+        prefillCachedHistory: DEFAULT_PREFILL_CACHED_HISTORY,
+      });
+    }
+  };
+
+  return (
+    <div className="mt-4 p-4 bg-blue-50 border border-blue-100 rounded-lg space-y-4 animate-fadeIn">
+      <div className="flex justify-between items-center">
+        <h3 className="text-sm font-semibold text-blue-800 flex items-center gap-2">
+          <Zap className="w-4 h-4" />
+          상세 프리필 설정 (Advanced Prefill)
+        </h3>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleResetDefaults}
+          className="text-blue-600 hover:text-blue-800 hover:bg-blue-100 h-8 text-xs"
+        >
+          <RotateCcw className="w-3 h-3 mr-1" />
+          기본값 복원
+        </Button>
+      </div>
+      
+      <Textarea
+        label="시스템 지침 (System Instruction)"
+        value={config.prefillSystemInstruction}
+        onChange={(e) => updateConfig({ prefillSystemInstruction: e.target.value })}
+        rows={6}
+        className="font-mono text-xs"
+        helperText="모델의 역할과 기본적인 번역 규칙을 정의합니다."
+      />
+
+      <div className="grid grid-cols-1 gap-4">
+        <Textarea
+          label="히스토리: 사용자 요청 (User Prompt)"
+          value={getHistoryPart('user')}
+          onChange={(e) => updateHistory('user', e.target.value)}
+          rows={4}
+          className="font-mono text-xs"
+          helperText="번역 톤앤매너, 주의사항 등을 구체적으로 지시하는 페르소나 설정입니다."
+        />
+
+        <Textarea
+          label="히스토리: 모델 응답 (Model Acknowledgement)"
+          value={getHistoryPart('model')}
+          onChange={(e) => updateHistory('model', e.target.value)}
+          rows={3}
+          className="font-mono text-xs"
+          helperText="모델이 지시사항을 이해했음을 확인하는 가상의 응답입니다."
+        />
+      </div>
+      
+      <div className="text-xs text-blue-600 bg-blue-100 p-2 rounded">
+        💡 <strong>Tip:</strong> 이 설정은 번역 요청 이전에 모델에게 '이전 대화'로 주입되어, 모델이 설정된 페르소나를 유지하도록 돕습니다.
+      </div>
+    </div>
+  );
+}
+
+/**
  * 번역 설정 컴포넌트
  */
 function TranslationSettings() {
@@ -173,7 +268,7 @@ function TranslationSettings() {
           value={config.temperature}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ temperature: parseFloat(e.target.value) })}
           min={0}
-          max={2.0}
+          max={1}
           step={0.1}
           formatValue={(v: number) => v.toFixed(1)}
         />
@@ -191,11 +286,14 @@ function TranslationSettings() {
         {/* 프리필 모드 */}
         <div className="md:col-span-2">
           <Checkbox
-            label="프리필 번역 모드 사용"
+            label="프리필 번역 모드 사용 (Prefill Translation)"
             checked={config.enablePrefillTranslation}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ enablePrefillTranslation: e.target.checked })}
-            description="더 자연스러운 번역을 위해 사전 학습된 컨텍스트를 사용합니다."
+            description="더 자연스러운 번역을 위해 사전 학습된 컨텍스트(페르소나)를 사용합니다."
           />
+          
+          {/* 프리필 상세 설정 에디터 */}
+          {config.enablePrefillTranslation && <PrefillSettingsEditor />}
         </div>
 
         {/* 용어집 주입 */}
@@ -225,14 +323,14 @@ function PromptSettings() {
         onClick={() => setIsExpanded(!isExpanded)}
         className="w-full flex justify-between items-center text-xl font-semibold text-gray-800"
       >
-        <span>📝 프롬프트 설정</span>
+        <span>📝 번역 프롬프트 템플릿</span>
         <span className="text-gray-400">{isExpanded ? '▲' : '▼'}</span>
       </button>
       
       {isExpanded && (
         <div className="mt-4">
           <Textarea
-            label="번역 프롬프트 템플릿"
+            label="메인 번역 프롬프트"
             value={config.prompts}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateConfig({ prompts: e.target.value })}
             rows={10}
