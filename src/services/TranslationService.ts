@@ -162,8 +162,13 @@ export class TranslationService {
 
   /**
    * 단일 청크 번역
+   * @param enableSafetyRetry - 실패 시 콘텐츠 안전 분할 재시도를 수행할지 여부 (재귀 호출 시 false로 설정)
    */
-  async translateChunk(chunkText: string, chunkIndex: number): Promise<TranslationResult> {
+  async translateChunk(
+    chunkText: string, 
+    chunkIndex: number, 
+    enableSafetyRetry: boolean = true
+  ): Promise<TranslationResult> {
     if (!chunkText.trim()) {
       return {
         chunkIndex,
@@ -249,7 +254,8 @@ export class TranslationService {
       this.log('error', `청크 ${chunkIndex + 1} 번역 실패: ${errorMessage}`);
 
       // 콘텐츠 안전 재시도
-      if (this.config.useContentSafetyRetry && GeminiClient.isContentSafetyError(error as Error)) {
+      // enableSafetyRetry가 true일 때만 자체 재시도 로직 수행
+      if (enableSafetyRetry && this.config.useContentSafetyRetry && GeminiClient.isContentSafetyError(error as Error)) {
         this.log('warning', `콘텐츠 안전 오류 감지. 분할 재시도 시작...`);
         return this.retryWithSmallerChunks(chunkText, chunkIndex);
       }
@@ -354,9 +360,10 @@ export class TranslationService {
 
       try {
         // 분할된 조각으로 번역 시도
-        const result = await this.translateChunk(subChunks[i], originalIndex);
+        // 여기서 호출할 때는 enableSafetyRetry를 false로 설정하여
+        // translateChunk가 에러를 가로채지 않고 그대로 던지거나 실패를 반환하게 함
+        const result = await this.translateChunk(subChunks[i], originalIndex, false);
         
-        // 중단 확인
         if (this.stopRequested) {
             translatedParts.push('[중단됨]');
             break;
