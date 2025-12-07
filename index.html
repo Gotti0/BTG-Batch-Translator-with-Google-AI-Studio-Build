@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BTG - Batch Translator for Gemini</title>
+  
+  <!-- Tailwind CSS (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Tailwind 커스텀 설정 -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              200: '#bfdbfe',
+              300: '#93c5fd',
+              400: '#60a5fa',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              800: '#1e40af',
+              900: '#1e3a8a',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  
+  <!-- 기본 스타일 -->
+  <style>
+    /* 스크롤바 스타일링 */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #c1c1c1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #a1a1a1;
+    }
+    
+    /* 텍스트 영역 기본 스타일 */
+    textarea {
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    }
+    
+    /* 로딩 애니메이션 */
+    .spinner {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #3b82f6;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    /* 트랜지션 */
+    .fade-in {
+      animation: fadeIn 0.3s ease-in-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    /* 모달 애니메이션 */
+    .animate-fadeIn {
+      animation: fadeIn 0.2s ease-out;
+    }
+    .animate-scaleIn {
+      animation: scaleIn 0.2s ease-out;
+    }
+    @keyframes scaleIn {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    
+    /* 프로그레스바 스트라이프 */
+    .bg-stripes {
+      background-image: linear-gradient(
+        45deg,
+        rgba(255,255,255,0.15) 25%,
+        transparent 25%,
+        transparent 50%,
+        rgba(255,255,255,0.15) 50%,
+        rgba(255,255,255,0.15) 75%,
+        transparent 75%,
+        transparent
+      );
+      background-size: 1rem 1rem;
+    }
+    .animate-stripes {
+      animation: stripes 1s linear infinite;
+    }
+    @keyframes stripes {
+      from { background-position: 1rem 0; }
+      to { background-position: 0 0; }
+    }
+    
+    /* 무한 로딩 프로그레스바 */
+    .animate-indeterminate {
+      animation: indeterminate 1.5s ease-in-out infinite;
+    }
+    @keyframes indeterminate {
+      0% { left: -30%; }
+      50% { left: 100%; }
+      100% { left: 100%; }
+    }
+  </style>
+  
+  <!-- Import Map for ES Modules -->
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react/jsx-runtime": "https://esm.sh/react@18.2.0/jsx-runtime",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "zustand": "https://esm.sh/zustand@4.4.7",
+    "zustand/middleware": "https://esm.sh/zustand@4.4.7/middleware",
+    "@google/genai": "https://esm.sh/@google/genai",
+    "lucide-react": "https://esm.sh/lucide-react@0.294.0?external=react",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "src/": "https://aistudiocdn.com/src@^1.1.2/"
+  }
+}
+</script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <!-- React 앱 마운트 포인트 -->
+  <div id="root">
+    <!-- 로딩 중 표시 (React 로드 전) -->
+    <div class="flex items-center justify-center min-h-screen">
+      <div class="text-center">
+        <div class="spinner mx-auto mb-4"></div>
+        <p class="text-gray-600">앱을 로딩 중입니다...</p>
+      </div>
+    </div>
+  </div>
+  
+  <!-- React 앱 진입점 -->
+  <script type="module" src="./index.tsx"></script>
+</body>
+</html>
