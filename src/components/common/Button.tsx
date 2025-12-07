@@ -6,7 +6,7 @@ import React from 'react';
 /**
  * 버튼 Props
  */
-export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps extends React.ComponentPropsWithoutRef<'button'> {
   /** 버튼 변형 */
   variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger' | 'success';
   /** 버튼 크기 */
@@ -75,7 +75,7 @@ const sizeClasses = {
 /**
  * 버튼 컴포넌트
  */
-export function Button({
+export const Button: React.FC<ButtonProps> = ({
   variant = 'primary',
   size = 'md',
   fullWidth = false,
@@ -86,7 +86,7 @@ export function Button({
   disabled,
   className = '',
   ...props
-}: ButtonProps) {
+}) => {
   const isDisabled = disabled || loading;
 
   return (
@@ -114,12 +114,12 @@ export function Button({
       {!loading && rightIcon}
     </button>
   );
-}
+};
 
 /**
  * 아이콘 버튼 Props
  */
-export interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface IconButtonProps extends Omit<React.ComponentPropsWithoutRef<'button'>, 'children'> {
   /** 아이콘 */
   icon: React.ReactNode;
   /** 버튼 변형 */
@@ -144,7 +144,7 @@ const iconSizeClasses = {
 /**
  * 아이콘 버튼 컴포넌트
  */
-export function IconButton({
+export const IconButton: React.FC<IconButtonProps> = ({
   icon,
   variant = 'ghost',
   size = 'md',
@@ -152,7 +152,7 @@ export function IconButton({
   disabled,
   className = '',
   ...props
-}: IconButtonProps) {
+}) => {
   const isDisabled = disabled || loading;
 
   return (
@@ -175,7 +175,7 @@ export function IconButton({
       ) : icon}
     </button>
   );
-}
+};
 
 /**
  * 버튼 그룹 Props
@@ -206,17 +206,17 @@ const gapClasses = {
 /**
  * 버튼 그룹 컴포넌트
  */
-export function ButtonGroup({
+export const ButtonGroup: React.FC<ButtonGroupProps> = ({
   children,
   align = 'left',
   gap = 'md',
   className = '',
-}: ButtonGroupProps) {
+}) => {
   return (
     <div className={`flex flex-wrap ${alignClasses[align]} ${gapClasses[gap]} ${className}`}>
       {children}
     </div>
   );
-}
+};
 
 export default Button;

@@ -3,8 +3,13 @@
 // 검토 및 수정 페이지
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { CheckCircle, AlertTriangle, RefreshCw, Copy, Eye, EyeOff, TrendingUp, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { 
+  CheckCircle, AlertTriangle, RefreshCw, Copy, Eye, EyeOff, 
+  TrendingUp, AlertCircle, ChevronLeft, ChevronRight,
+  Trash2, Edit2, Save, X 
+} from 'lucide-react';
 import { useTranslationStore } from '../stores/translationStore';
+import { useTranslation } from '../hooks/useTranslation';
 import type { TranslationResult } from '../types/dtos';
 import { Button, IconButton, ButtonGroup } from '../components';
 import { QualityCheckService, type RegressionAnalysis } from '../services/QualityCheckService';
@@ -29,19 +34,28 @@ function StatusBadge({ success }: { success: boolean }) {
 /**
  * 청크 카드 컴포넌트 (React.memo 적용)
  */
-const ChunkCard = React.memo(function ChunkCard({ 
-  result, 
-  isExpanded, 
-  onToggle,
-  onRetry,
-}: { 
+interface ChunkCardProps {
   result: TranslationResult;
   isExpanded: boolean;
   onToggle: (index: number) => void;
-  onRetry: (index: number) => void;
-}) {
-  const [copyFeedback, setCopyFeedback] = useState(false);
+  onRetry: (index: number) => void;      // 개별 재번역
+  onDiscard: (index: number) => void;    // 번역 비우기
+  onUpdate: (index: number, text: string) => void; // 직접 수정
+}
 
+const ChunkCard = React.memo(function ChunkCard({ 
+  result, 
+  isExpanded, 
+  onToggle, 
+  onRetry, 
+  onDiscard, 
+  onUpdate 
+}: ChunkCardProps) {
+  const [copyFeedback, setCopyFeedback] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedText, setEditedText] = useState(result.translatedText);
+
+  // 복사 핸들러
   const handleCopy = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     await navigator.clipboard.writeText(result.translatedText);
@@ -49,6 +63,35 @@ const ChunkCard = React.memo(function ChunkCard({
     setTimeout(() => setCopyFeedback(false), 2000);
   }, [result.translatedText]);
 
+  // 편집 모드 진입
+  const handleEditClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditedText(result.translatedText);
+    setIsEditing(true);
+    if (!isExpanded) onToggle(result.chunkIndex);
+  }, [isExpanded, onToggle, result.chunkIndex, result.translatedText]);
+
+  // 편집 취소
+  const handleCancelEdit = useCallback(() => {
+    setIsEditing(false);
+    setEditedText(result.translatedText);
+  }, [result.translatedText]);
+
+  // 저장
+  const handleSave = useCallback(() => {
+    onUpdate(result.chunkIndex, editedText);
+    setIsEditing(false);
+  }, [onUpdate, result.chunkIndex, editedText]);
+
+  // 비우기 (실패 처리)
+  const handleDiscardClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (confirm('이 청크의 번역 내용을 비우고 "실패" 상태로 변경하시겠습니까?\n(나중에 일괄 재번역할 수 있습니다)')) {
+      onDiscard(result.chunkIndex);
+    }
+  }, [onDiscard, result.chunkIndex]);
+
+  // 재번역 요청
   const handleRetryClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     onRetry(result.chunkIndex);
@@ -79,16 +122,39 @@ const ChunkCard = React.memo(function ChunkCard({
             원문 {result.originalText.length}자 → 번역 {result.translatedText.length}자 ({ratio}%)
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          {!result.success && (
-            <IconButton
-              onClick={handleRetryClick}
-              title="재번역"
-              className="text-blue-600 hover:text-blue-800"
-              icon={<RefreshCw className="w-4 h-4" />}
-              aria-label="재번역"
+        <div className="flex items-center gap-1">
+          {/* [1] 비우기 버튼 (성공 상태일 때만) */}
+          {result.success && !isEditing && (
+            <IconButton 
+              onClick={handleDiscardClick} 
+              icon={<Trash2 className="w-4 h-4" />} 
+              className="text-red-400 hover:text-red-600 hover:bg-red-50"
+              title="번역 비우기 (재번역 대기)"
+              aria-label="번역 비우기"
             />
           )}
+          {/* [2] 재번역 버튼 (실패 상태일 때) */}
+          {!result.success && (
+            <IconButton 
+              onClick={handleRetryClick} 
+              icon={<RefreshCw className="w-4 h-4" />}
+              className="text-blue-600 hover:text-blue-800"
+              title="즉시 재번역"
+              aria-label="즉시 재번역"
+            />
+          )}
+          {/* [3] 수정 버튼 */}
+          {!isEditing && (
+            <IconButton 
+              onClick={handleEditClick} 
+              icon={<Edit2 className="w-4 h-4" />}
+              className="text-gray-500 hover:text-gray-700" 
+              title="직접 수정"
+              aria-label="직접 수정"
+            />
+          )}
+          <div className="w-px h-4 bg-gray-300 mx-1"></div>
+          {/* [4] 복사 버튼 */}
           <IconButton
             onClick={handleCopy}
             title="복사"
@@ -96,6 +162,7 @@ const ChunkCard = React.memo(function ChunkCard({
             icon={copyFeedback ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
             aria-label="복사"
           />
+          {/* [5] 접기/펼치기 아이콘 */}
           {isExpanded ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
         </div>
       </div>
@@ -106,24 +173,50 @@ const ChunkCard = React.memo(function ChunkCard({
           {/* 원문 */}
           <div>
             <h4 className="text-sm font-medium text-gray-600 mb-2">원문</h4>
-            <div className="bg-gray-100 rounded-lg p-3 max-h-48 overflow-y-auto">
-              <pre className="whitespace-pre-wrap text-sm text-gray-700">{result.originalText}</pre>
+            <div className="bg-gray-100 rounded-lg p-3 max-h-96 overflow-y-auto">
+              <pre className="whitespace-pre-wrap text-sm text-gray-700 font-mono">{result.originalText}</pre>
             </div>
           </div>
           
           {/* 번역문 */}
           <div>
             <h4 className="text-sm font-medium text-gray-600 mb-2">번역</h4>
-            <div className={`rounded-lg p-3 max-h-48 overflow-y-auto ${result.success ? 'bg-green-50' : 'bg-red-50'}`}>
-              {result.success ? (
-                <pre className="whitespace-pre-wrap text-sm text-gray-700">{result.translatedText}</pre>
-              ) : (
-                <div className="text-red-600">
-                  <p className="font-medium">번역 실패</p>
-                  <p className="text-sm mt-1">{result.error || '알 수 없는 오류'}</p>
+            {isEditing ? (
+              <div className="flex flex-col h-full">
+                <textarea 
+                  className="w-full flex-1 border rounded-lg p-3 text-sm font-mono focus:ring-2 focus:ring-primary-500 focus:border-primary-500 min-h-[12rem]"
+                  value={editedText} 
+                  onChange={(e) => setEditedText(e.target.value)}
+                  placeholder="번역 내용을 수정하세요..."
+                />
+                <div className="flex justify-end gap-2 mt-2">
+                  <Button size="sm" variant="ghost" onClick={handleCancelEdit}>취소</Button>
+                  <Button size="sm" variant="primary" onClick={handleSave} leftIcon={<Save className="w-4 h-4"/>}>저장</Button>
                 </div>
-              )}
-            </div>
+              </div>
+            ) : (
+              <div className={`rounded-lg p-3 max-h-96 overflow-y-auto ${result.success ? 'bg-green-50' : 'bg-red-50'}`}>
+                {result.success ? (
+                  <pre className="whitespace-pre-wrap text-sm text-gray-700 font-mono">{result.translatedText}</pre>
+                ) : (
+                  <div className="text-red-600">
+                    <p className="font-medium flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4" />
+                      번역 실패
+                    </p>
+                    <p className="text-sm mt-1">{result.error || '알 수 없는 오류'}</p>
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      className="mt-3 bg-white text-red-600 border-red-200 hover:bg-red-50"
+                      onClick={handleRetryClick}
+                    >
+                      <RefreshCw className="w-3 h-3 mr-1" /> 재번역 시도
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -310,7 +403,9 @@ const ITEMS_PER_PAGE = 20;
  * 검토 및 수정 페이지 메인 컴포넌트
  */
 export function ReviewPage() {
-  const { results } = useTranslationStore();
+  const { results, updateResult, combineResultsToText } = useTranslationStore();
+  const { retryFailedChunks, retrySingleChunk } = useTranslation();
+  
   const [filter, setFilter] = useState<'all' | 'success' | 'failed'>('all');
   const [expandedChunks, setExpandedChunks] = useState<Set<number>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
@@ -357,10 +452,36 @@ export function ReviewPage() {
     setExpandedChunks(new Set());
   }, []);
 
-  const handleRetry = useCallback((chunkIndex: number) => {
-    console.log('재번역 요청:', chunkIndex);
-    // TODO: 재번역 로직 연결
-  }, []);
+  // [1] 번역 비우기 핸들러
+  const handleDiscard = useCallback((chunkIndex: number) => {
+    updateResult(chunkIndex, {
+      success: false,
+      translatedText: '',
+      error: '사용자 요청에 의한 재번역 대기'
+    });
+    // 비운 후에는 성공 항목이 줄어들고 전체 텍스트도 갱신되어야 함 (빈 텍스트로)
+    combineResultsToText();
+  }, [updateResult, combineResultsToText]);
+
+  // [2] 직접 수정 핸들러
+  const handleUpdateText = useCallback((chunkIndex: number, newText: string) => {
+    updateResult(chunkIndex, {
+      translatedText: newText,
+      success: true,
+      error: undefined
+    });
+    combineResultsToText(); // 전체 텍스트 동기화
+  }, [updateResult, combineResultsToText]);
+
+  // [3] 개별 재번역 핸들러
+  const handleSingleRetry = useCallback((chunkIndex: number) => {
+    retrySingleChunk(chunkIndex);
+  }, [retrySingleChunk]);
+
+  // [4] 일괄 재시도 핸들러
+  const handleBatchRetry = useCallback(() => {
+    retryFailedChunks();
+  }, [retryFailedChunks]);
 
   const handlePageChange = useCallback((newPage: number) => {
     if (newPage >= 1 && newPage <= totalPages) {
@@ -368,6 +489,8 @@ export function ReviewPage() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, [totalPages]);
+
+  const hasFailures = useMemo(() => results.some(r => !r.success), [results]);
 
   return (
     <div className="space-y-6 fade-in">
@@ -378,18 +501,29 @@ export function ReviewPage() {
             검토 및 수정
           </h2>
           
-          {results.length > 0 && (
-            <div className="flex gap-2">
-              <Button
+          <div className="flex gap-2">
+            {hasFailures && (
+              <Button 
+                onClick={handleBatchRetry} 
                 variant="secondary"
+                size="sm"
+                className="bg-red-50 text-red-700 hover:bg-red-100 border border-red-200"
+                leftIcon={<RefreshCw className="w-4 h-4"/>}
+              >
+                실패/비운 항목 일괄 재번역
+              </Button>
+            )}
+            {results.length > 0 && (
+              <Button
+                variant="outline"
                 size="sm"
                 onClick={collapseAll}
                 disabled={expandedChunks.size === 0}
               >
                 모두 접기
               </Button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {results.length === 0 ? (
@@ -414,7 +548,9 @@ export function ReviewPage() {
                   result={result}
                   isExpanded={expandedChunks.has(result.chunkIndex)}
                   onToggle={toggleExpand}
-                  onRetry={handleRetry}
+                  onRetry={handleSingleRetry}
+                  onDiscard={handleDiscard}
+                  onUpdate={handleUpdateText}
                 />
               ))}
             </div>

@@ -1,3 +1,4 @@
+
 // hooks/useTranslation.ts
 // 번역 기능을 위한 커스텀 훅
 
@@ -31,6 +32,7 @@ export function useTranslation() {
     addResult,
     updateResult,
     setTranslatedText,
+    combineResultsToText, // 텍스트 재합성 함수 가져오기
     addLog,
     restoreSession,
   } = useTranslationStore();
@@ -206,6 +208,51 @@ export function useTranslation() {
       isTranslatingRef.current = false;
     }
   }, [results, getOrCreateService, updateProgress, setResults, updateResult, setTranslatedText, addLog]);
+
+  // [NEW] 단일 청크 즉시 재번역
+  const retrySingleChunk = useCallback(async (chunkIndex: number) => {
+    // 1. 작업 중복 방지 체크
+    if (isTranslatingRef.current) {
+      addLog('warning', '이미 다른 작업이 진행 중입니다.');
+      return;
+    }
+
+    // 2. 대상 청크 데이터 확보
+    const targetResult = results.find(r => r.chunkIndex === chunkIndex);
+    if (!targetResult) {
+      addLog('error', `청크 #${chunkIndex + 1} 정보를 찾을 수 없습니다.`);
+      return;
+    }
+
+    isTranslatingRef.current = true;
+    addLog('info', `청크 #${chunkIndex + 1} 개별 재번역 시작...`);
+
+    try {
+      const service = getOrCreateService();
+      
+      // 3. 단일 청크 번역 요청 (안전 모드 재시도 활성화)
+      const newResult = await service.translateChunk(
+        targetResult.originalText,
+        chunkIndex,
+        true 
+      );
+
+      // 4. 결과 업데이트 및 전체 텍스트 동기화
+      updateResult(chunkIndex, newResult);
+      combineResultsToText(); // 전체 텍스트 갱신
+
+      if (newResult.success) {
+        addLog('info', `청크 #${chunkIndex + 1} 재번역 완료`);
+      } else {
+        addLog('error', `청크 #${chunkIndex + 1} 재번역 실패: ${newResult.error}`);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      addLog('error', `재번역 오류: ${errorMessage}`);
+    } finally {
+      isTranslatingRef.current = false;
+    }
+  }, [results, getOrCreateService, updateResult, combineResultsToText, addLog]);
 
   // 결과 다운로드
   const downloadResult = useCallback((filename?: string) => {
@@ -391,6 +438,7 @@ export function useTranslation() {
     executeTranslation,
     cancelTranslation,
     retryFailedChunks,
+    retrySingleChunk, // [NEW]
     downloadResult,
     
     // 스냅샷 액션

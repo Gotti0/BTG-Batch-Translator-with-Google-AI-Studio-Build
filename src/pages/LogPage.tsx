@@ -11,7 +11,7 @@ import { Button, ConfirmDialog } from '../components';
 /**
  * 로그 레벨 배지 컴포넌트
  */
-function LogLevelBadge({ level }: { level: LogEntry['level'] }) {
+const LogLevelBadge: React.FC<{ level: LogEntry['level'] }> = ({ level }) => {
   const styles = {
     info: 'bg-blue-100 text-blue-700',
     warning: 'bg-yellow-100 text-yellow-700',
@@ -31,12 +31,12 @@ function LogLevelBadge({ level }: { level: LogEntry['level'] }) {
       {labels[level]}
     </span>
   );
-}
+};
 
 /**
  * 로그 항목 컴포넌트
  */
-function LogItem({ log }: { log: LogEntry }) {
+const LogItem: React.FC<{ log: LogEntry }> = ({ log }) => {
   const timeStr = log.timestamp.toLocaleTimeString('ko-KR', {
     hour: '2-digit',
     minute: '2-digit',
@@ -57,22 +57,22 @@ function LogItem({ log }: { log: LogEntry }) {
       <span className={`font-mono text-sm ${textColor[log.level]}`}>{log.message}</span>
     </div>
   );
-}
+};
 
 /**
  * 필터 버튼 컴포넌트
  */
-function FilterButton({ 
-  level, 
-  active, 
-  count, 
-  onClick 
-}: { 
+const FilterButton: React.FC<{ 
   level: LogEntry['level'] | 'all';
   active: boolean;
   count: number;
   onClick: () => void;
-}) {
+}> = ({ 
+  level, 
+  active, 
+  count, 
+  onClick 
+}) => {
   const getVariant = (): 'primary' | 'secondary' | 'danger' | 'ghost' => {
     if (!active) return 'ghost';
     return 'primary';
@@ -104,7 +104,7 @@ function FilterButton({
       {labels[level]} ({count})
     </Button>
   );
-}
+};
 
 /**
  * 실행 로그 페이지 메인 컴포넌트

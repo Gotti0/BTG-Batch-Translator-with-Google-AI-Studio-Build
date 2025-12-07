@@ -1,4 +1,3 @@
-
 // pages/GlossaryPage.tsx
 // 용어집 관리 페이지
 
@@ -159,7 +158,7 @@ function GlossaryToolbar() {
 /**
  * 용어집 항목 행 컴포넌트
  */
-function GlossaryRow({ entry }: { entry: GlossaryEntry }) {
+const GlossaryRow: React.FC<{ entry: GlossaryEntry }> = ({ entry }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editedEntry, setEditedEntry] = useState(entry);
   
@@ -251,7 +250,7 @@ function GlossaryRow({ entry }: { entry: GlossaryEntry }) {
       </td>
     </tr>
   );
-}
+};
 
 /**
  * 새 항목 추가 폼 컴포넌트

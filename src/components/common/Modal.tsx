@@ -44,7 +44,7 @@ const sizeClasses = {
 /**
  * 모달 컴포넌트
  */
-export function Modal({
+export const Modal: React.FC<ModalProps> = ({
   isOpen,
   onClose,
   title,
@@ -55,7 +55,7 @@ export function Modal({
   closeOnEsc = true,
   showCloseButton = true,
   className = '',
-}: ModalProps) {
+}) => {
   // ESC 키 핸들러
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (closeOnEsc && e.key === 'Escape') {
@@ -131,7 +131,7 @@ export function Modal({
       </div>
     </div>
   );
-}
+};
 
 /**
  * 확인 다이얼로그 Props
@@ -160,7 +160,7 @@ export interface ConfirmDialogProps {
 /**
  * 확인 다이얼로그
  */
-export function ConfirmDialog({
+export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   isOpen,
   onClose,
   onConfirm,
@@ -170,7 +170,7 @@ export function ConfirmDialog({
   cancelText = '취소',
   danger = false,
   loading = false,
-}: ConfirmDialogProps) {
+}) => {
   return (
     <Modal
       isOpen={isOpen}
@@ -210,7 +210,7 @@ export function ConfirmDialog({
       <div className="text-gray-600">{message}</div>
     </Modal>
   );
-}
+};
 
 /**
  * 알림 다이얼로그 Props
@@ -233,14 +233,14 @@ export interface AlertDialogProps {
 /**
  * 알림 다이얼로그
  */
-export function AlertDialog({
+export const AlertDialog: React.FC<AlertDialogProps> = ({
   isOpen,
   onClose,
   title,
   message,
   buttonText = '확인',
   type = 'info',
-}: AlertDialogProps) {
+}) => {
   const iconMap = {
     info: '💬',
     success: '✅',
@@ -268,6 +268,6 @@ export function AlertDialog({
       <div className="text-gray-600">{message}</div>
     </Modal>
   );
-}
+};
 
 export default Modal;
