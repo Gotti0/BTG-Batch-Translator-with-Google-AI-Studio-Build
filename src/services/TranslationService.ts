@@ -199,7 +199,7 @@ export class TranslationService {
 
     const prompt = this.constructPrompt(chunkText, chunkIndex);
     const textPreview = chunkText.slice(0, 100).replace(/\n/g, ' ');
-    this.log('info', `청크 ${chunkIndex + 1} 번역 시작: "${textPreview}..."`);
+    this.log('info', `청크 ${chunkIndex + 1} 번역 시작 (모델: ${this.config.modelName}): "${textPreview}..."`);
 
     const generationConfig: GenerationConfig = {
       temperature: this.config.temperature,
