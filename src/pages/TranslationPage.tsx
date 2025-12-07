@@ -28,8 +28,7 @@ import type { FileContent } from '../types/dtos';
  */
 function FileUploadSection() {
   const { inputFiles, addInputFiles, removeInputFile, clearInputFiles } = useTranslationStore();
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-
+  
   // File 객체를 FileContent로 변환하여 스토어에 추가
   const handleFilesSelected = useCallback(async (files: File[]) => {
     const fileContents: FileContent[] = [];
@@ -50,18 +49,15 @@ function FileUploadSection() {
     
     if (fileContents.length > 0) {
       addInputFiles(fileContents);
-      setSelectedFiles((prev: File[]) => [...prev, ...files]);
     }
   }, [addInputFiles]);
 
   const handleFileRemove = useCallback((index: number) => {
     removeInputFile(index);
-    setSelectedFiles((prev: File[]) => prev.filter((_: File, i: number) => i !== index));
   }, [removeInputFile]);
 
   const handleClearAll = useCallback(() => {
     clearInputFiles();
-    setSelectedFiles([]);
   }, [clearInputFiles]);
 
   return (
@@ -76,7 +72,7 @@ function FileUploadSection() {
         multiple={true}
         maxSize={50 * 1024 * 1024}
         onFilesSelected={handleFilesSelected}
-        selectedFiles={selectedFiles}
+        selectedFiles={inputFiles}
         onFileRemove={handleFileRemove}
         height="h-32"
       />

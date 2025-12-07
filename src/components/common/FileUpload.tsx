@@ -5,6 +5,14 @@ import React, { useCallback, useRef, useState } from 'react';
 import { Upload, X, File, AlertCircle } from 'lucide-react';
 
 /**
+ * 파일 표시용 인터페이스
+ */
+export interface FileDisplayItem {
+  name: string;
+  size: number;
+}
+
+/**
  * 파일 업로드 컴포넌트 Props
  */
 export interface FileUploadProps {
@@ -16,8 +24,8 @@ export interface FileUploadProps {
   maxSize?: number;
   /** 파일 선택 시 콜백 */
   onFilesSelected: (files: File[]) => void;
-  /** 선택된 파일 목록 (외부 상태) */
-  selectedFiles?: File[];
+  /** 선택된 파일 목록 (외부 상태) - File 객체 또는 FileDisplayItem 호환 객체 */
+  selectedFiles?: FileDisplayItem[];
   /** 파일 제거 콜백 */
   onFileRemove?: (index: number) => void;
   /** 비활성화 여부 */

@@ -1,14 +1,17 @@
+
 // pages/GlossaryPage.tsx
 // 용어집 관리 페이지
 
 import React, { useState, useCallback } from 'react';
-import { BookOpen, Plus, Trash2, Download, Upload, Search, Edit2, Check, X, Sparkles, Square, FileText } from 'lucide-react';
+import { BookOpen, Plus, Trash2, Download, Upload, Search, Edit2, Check, X, Sparkles, Square, FileText, SlidersHorizontal, RotateCcw } from 'lucide-react';
 import { useGlossaryStore } from '../stores/glossaryStore';
 import { useTranslationStore } from '../stores/translationStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { FileHandler } from '../utils/fileHandler';
 import { useGlossary } from '../hooks/useGlossary';
+import { DEFAULT_GLOSSARY_EXTRACTION_PROMPT } from '../types/config';
 import type { GlossaryEntry } from '../types/dtos';
-import { Button, IconButton, Input, Select, Checkbox, ConfirmDialog, ProgressBar, Textarea } from '../components';
+import { Button, IconButton, Input, Select, Checkbox, ConfirmDialog, ProgressBar, Textarea, Slider } from '../components';
 
 /**
  * 용어집 통계 컴포넌트
@@ -304,6 +307,7 @@ function AddEntryForm() {
  */
 function GlossaryExtractionSection() {
   const { inputFiles } = useTranslationStore();
+  const { config, updateConfig } = useSettingsStore();
   const {
     isExtracting,
     extractionProgress,
@@ -314,6 +318,7 @@ function GlossaryExtractionSection() {
   } = useGlossary();
   
   const [isExpanded, setIsExpanded] = useState(false);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [customText, setCustomText] = useState('');
   const [useCustomText, setUseCustomText] = useState(false);
 
@@ -372,6 +377,71 @@ function GlossaryExtractionSection() {
               className="font-mono text-sm"
             />
           )}
+
+          {/* 추출 상세 설정 (Advanced Settings) */}
+          <div className="bg-white/60 rounded-lg p-3 border border-purple-100">
+            <button
+              onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+              className="flex items-center gap-2 text-sm font-medium text-purple-700 hover:text-purple-900 transition-colors w-full"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+              <span>추출 상세 설정 (청크, 샘플링, 프롬프트)</span>
+              <span className="text-xs text-purple-400 ml-auto">{showAdvancedSettings ? '접기 ▲' : '펼치기 ▼'}</span>
+            </button>
+            
+            {showAdvancedSettings && (
+              <div className="mt-4 space-y-4 animate-fadeIn">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Input
+                    type="number"
+                    label="청크 크기 (Glossary Chunk Size)"
+                    value={config.glossaryChunkSize}
+                    onChange={(e) => updateConfig({ glossaryChunkSize: parseInt(e.target.value) || 8000 })}
+                    min={1000}
+                    step={1000}
+                    helperText="텍스트를 분석할 단위 크기 (글자)"
+                  />
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <label className="text-sm font-medium text-gray-700">샘플링 비율 ({config.glossarySamplingRatio}%)</label>
+                    </div>
+                    <Slider
+                      value={config.glossarySamplingRatio}
+                      onChange={(e) => updateConfig({ glossarySamplingRatio: parseInt(e.target.value) || 10 })}
+                      min={1}
+                      max={100}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">전체 텍스트 중 분석할 비율 (높을수록 정확도↑ 속도↓)</p>
+                  </div>
+                </div>
+                
+                <Textarea
+                  label="용어집 추출 프롬프트 (Extraction Prompt)"
+                  value={config.glossaryExtractionPrompt}
+                  onChange={(e) => updateConfig({ glossaryExtractionPrompt: e.target.value })}
+                  rows={6}
+                  className="font-mono text-xs"
+                  helperText="{novelText}, {target_lang_name}, {target_lang_code} 변수 사용 가능"
+                />
+
+                <div className="flex justify-end">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => updateConfig({ 
+                      glossaryChunkSize: 8000, 
+                      glossarySamplingRatio: 10,
+                      glossaryExtractionPrompt: DEFAULT_GLOSSARY_EXTRACTION_PROMPT 
+                    })}
+                    className="text-purple-600 hover:bg-purple-50 text-xs h-8"
+                  >
+                    <RotateCcw className="w-3 h-3 mr-1" />
+                    기본값으로 복원
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* 진행률 표시 */}
           {isExtracting && extractionProgress && (

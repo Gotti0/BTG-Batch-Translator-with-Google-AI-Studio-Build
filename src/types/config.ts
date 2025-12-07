@@ -155,7 +155,7 @@ Ensure your response is a list of objects, where each object has 'keyword', 'tra
  */
 export const defaultConfig: AppConfig = {
   // API 설정
-  modelName: 'gemini-2.0-flash',
+  modelName: 'gemini-2.5-flash',
   temperature: 0.7,
   topP: 0.9,
   thinkingBudget: undefined,
@@ -193,7 +193,7 @@ export const defaultConfig: AppConfig = {
   glossaryTargetLanguageCode: 'ko',
   glossaryTargetLanguageName: 'Korean',
   glossaryChunkSize: 8000,
-  glossaryExtractionPrompt: '',
+  glossaryExtractionPrompt: DEFAULT_GLOSSARY_EXTRACTION_PROMPT,
   
   // 후처리 설정
   enablePostProcessing: true,
