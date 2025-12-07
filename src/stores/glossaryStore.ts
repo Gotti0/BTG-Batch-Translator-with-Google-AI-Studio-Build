@@ -223,7 +223,19 @@ export const useGlossaryStore = create<GlossaryState>()(
       // === 내보내기/가져오기 ===
       exportToJson: () => {
         const { entries } = get();
-        return JSON.stringify(entries, null, 2);
+        // exportToJson 로직은 GlossaryService에서 처리하거나, 여기서 동일하게 구현
+        // 일관성을 위해 여기서는 단순 JSON 문자열화만 수행하거나,
+        // 서비스와 동일한 변환 로직을 사용해야 함.
+        // 하지만 요구사항은 GlossaryService 수정이었으므로, 스토어의 exportToJson은
+        // 단순히 내부 상태를 내보내는 용도로 둘 수도 있으나,
+        // 사용자가 다운로드할 때 일관된 포맷을 원하므로 여기서도 변환 적용
+        const exportData = entries.map(entry => ({
+          keyword: entry.keyword,
+          translated_keyword: entry.translatedKeyword,
+          target_language: entry.targetLanguage,
+          occurrence_count: entry.occurrenceCount,
+        }));
+        return JSON.stringify(exportData, null, 2);
       },
       
       importFromJson: (json) => {
@@ -238,20 +250,34 @@ export const useGlossaryStore = create<GlossaryState>()(
           for (const item of parsed) {
             if (
               typeof item === 'object' &&
-              typeof item.keyword === 'string' &&
-              typeof item.translatedKeyword === 'string'
+              item !== null &&
+              typeof item.keyword === 'string'
             ) {
-              validEntries.push({
-                keyword: item.keyword,
-                translatedKeyword: item.translatedKeyword,
-                targetLanguage: item.targetLanguage || 'ko',
-                occurrenceCount: item.occurrenceCount || 0,
-              });
+              // Snake Case 데이터를 읽어서 Camel Case로 변환 (기존 호환성 유지)
+              const translatedKeyword = item.translated_keyword || item.translatedKeyword;
+              const targetLanguage = item.target_language || item.targetLanguage || 'ko';
+              const occurrenceCount = item.occurrence_count || item.occurrenceCount || 0;
+
+              if (typeof translatedKeyword === 'string') {
+                validEntries.push({
+                  keyword: item.keyword,
+                  translatedKeyword: translatedKeyword,
+                  targetLanguage: targetLanguage,
+                  occurrenceCount: occurrenceCount,
+                  // 메타데이터 생성
+                  id: `imported-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                });
+              }
             }
           }
           
-          set({ entries: validEntries });
-          return true;
+          if (validEntries.length > 0) {
+            set({ entries: validEntries });
+            return true;
+          }
+          return false;
         } catch (error) {
           console.error('용어집 가져오기 실패:', error);
           return false;

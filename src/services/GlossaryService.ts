@@ -473,14 +473,14 @@ export class GlossaryService {
   }
 
   /**
-   * 용어집을 JSON 문자열로 내보내기
+   * 용어집을 JSON 문자열로 내보내기 (Snake Case 변환 적용)
    */
   exportToJson(entries: GlossaryEntry[]): string {
     const exportData = entries.map(entry => ({
       keyword: entry.keyword,
-      translatedKeyword: entry.translatedKeyword,
-      targetLanguage: entry.targetLanguage,
-      occurrenceCount: entry.occurrenceCount,
+      translated_keyword: entry.translatedKeyword,
+      target_language: entry.targetLanguage,
+      occurrence_count: entry.occurrenceCount,
     }));
     return JSON.stringify(exportData, null, 2);
   }
