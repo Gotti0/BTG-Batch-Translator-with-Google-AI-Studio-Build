@@ -268,7 +268,7 @@ function TranslationSettings() {
           value={config.temperature}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ temperature: parseFloat(e.target.value) })}
           min={0}
-          max={1}
+          max={2}
           step={0.1}
           formatValue={(v: number) => v.toFixed(1)}
         />
