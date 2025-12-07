@@ -11,7 +11,7 @@ import {
 import { useTranslationStore } from '../stores/translationStore';
 import { useTranslation } from '../hooks/useTranslation';
 import type { TranslationResult } from '../types/dtos';
-import { Button, IconButton, ButtonGroup } from '../components';
+import { Button, IconButton, ButtonGroup, ConfirmDialog } from '../components';
 import { QualityCheckService, type RegressionAnalysis } from '../services/QualityCheckService';
 
 /**
@@ -85,10 +85,12 @@ const ChunkCard = React.memo(function ChunkCard({
 
   // 비우기 (실패 처리)
   const handleDiscardClick = useCallback((e: React.MouseEvent) => {
+    console.log('[ChunkCard] Discard button clicked for chunk', result.chunkIndex);
+    e.preventDefault();
     e.stopPropagation();
-    if (confirm('이 청크의 번역 내용을 비우고 "실패" 상태로 변경하시겠습니까?\n(나중에 일괄 재번역할 수 있습니다)')) {
-      onDiscard(result.chunkIndex);
-    }
+    
+    // 네이티브 confirm 대신 상위 컴포넌트의 다이얼로그 호출
+    onDiscard(result.chunkIndex);
   }, [onDiscard, result.chunkIndex]);
 
   // 재번역 요청
@@ -126,9 +128,10 @@ const ChunkCard = React.memo(function ChunkCard({
           {/* [1] 비우기 버튼 (성공 상태일 때만) */}
           {result.success && !isEditing && (
             <IconButton 
+              type="button"
               onClick={handleDiscardClick} 
-              icon={<Trash2 className="w-4 h-4" />} 
-              className="text-red-400 hover:text-red-600 hover:bg-red-50"
+              icon={<Trash2 className="w-4 h-4 pointer-events-none" />} 
+              className="text-red-400 hover:text-red-600 hover:bg-red-50 relative z-10"
               title="번역 비우기 (재번역 대기)"
               aria-label="번역 비우기"
             />
@@ -409,6 +412,7 @@ export function ReviewPage() {
   const [filter, setFilter] = useState<'all' | 'success' | 'failed'>('all');
   const [expandedChunks, setExpandedChunks] = useState<Set<number>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
+  const [discardTargetIndex, setDiscardTargetIndex] = useState<number | null>(null);
 
   // 필터링된 결과
   const filteredResults = useMemo(() => {
@@ -452,8 +456,9 @@ export function ReviewPage() {
     setExpandedChunks(new Set());
   }, []);
 
-  // [1] 번역 비우기 핸들러
-  const handleDiscard = useCallback((chunkIndex: number) => {
+  // [1] 번역 비우기 실행 로직 (다이얼로그 확인 후 호출)
+  const executeDiscard = useCallback((chunkIndex: number) => {
+    console.log('[ReviewPage] Executing discard for chunk', chunkIndex);
     updateResult(chunkIndex, {
       success: false,
       translatedText: '',
@@ -463,7 +468,21 @@ export function ReviewPage() {
     combineResultsToText();
   }, [updateResult, combineResultsToText]);
 
-  // [2] 직접 수정 핸들러
+  // [2] 번역 비우기 요청 핸들러 (다이얼로그 오픈)
+  const handleRequestDiscard = useCallback((chunkIndex: number) => {
+    console.log('[ReviewPage] Discard requested for chunk', chunkIndex);
+    setDiscardTargetIndex(chunkIndex);
+  }, []);
+
+  // [3] 번역 비우기 확인 핸들러
+  const handleConfirmDiscard = useCallback(() => {
+    if (discardTargetIndex !== null) {
+      executeDiscard(discardTargetIndex);
+      setDiscardTargetIndex(null);
+    }
+  }, [discardTargetIndex, executeDiscard]);
+
+  // [4] 직접 수정 핸들러
   const handleUpdateText = useCallback((chunkIndex: number, newText: string) => {
     updateResult(chunkIndex, {
       translatedText: newText,
@@ -473,12 +492,12 @@ export function ReviewPage() {
     combineResultsToText(); // 전체 텍스트 동기화
   }, [updateResult, combineResultsToText]);
 
-  // [3] 개별 재번역 핸들러
+  // [5] 개별 재번역 핸들러
   const handleSingleRetry = useCallback((chunkIndex: number) => {
     retrySingleChunk(chunkIndex);
   }, [retrySingleChunk]);
 
-  // [4] 일괄 재시도 핸들러
+  // [6] 일괄 재시도 핸들러
   const handleBatchRetry = useCallback(() => {
     retryFailedChunks();
   }, [retryFailedChunks]);
@@ -549,7 +568,7 @@ export function ReviewPage() {
                   isExpanded={expandedChunks.has(result.chunkIndex)}
                   onToggle={toggleExpand}
                   onRetry={handleSingleRetry}
-                  onDiscard={handleDiscard}
+                  onDiscard={handleRequestDiscard}
                   onUpdate={handleUpdateText}
                 />
               ))}
@@ -590,6 +609,17 @@ export function ReviewPage() {
           </>
         )}
       </div>
+
+      <ConfirmDialog
+        isOpen={discardTargetIndex !== null}
+        onClose={() => setDiscardTargetIndex(null)}
+        onConfirm={handleConfirmDiscard}
+        title="번역 비우기"
+        message="이 청크의 번역 내용을 비우고 '실패' 상태로 변경하시겠습니까? (나중에 일괄 재번역할 수 있습니다)"
+        confirmText="비우기"
+        cancelText="취소"
+        danger
+      />
     </div>
   );
 }
