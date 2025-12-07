@@ -444,11 +444,7 @@ function ResultPreview({ onExportSnapshot }: { onExportSnapshot: () => void }) {
   const { translatedText, results } = useTranslationStore();
   const { downloadResult } = useTranslation();
 
-  if (!translatedText && results.length === 0) return null;
-
-  const successCount = results.filter((r: { success: boolean }) => r.success).length;
-  const failCount = results.filter((r: { success: boolean }) => !r.success).length;
-
+  // [FIX] useMemo를 조건부 반환문(early return) 이전에 호출하여 Hook 규칙 준수
   // 텍스트 미리보기 계산 (메모이제이션)
   const previewText = useMemo(() => {
     if (translatedText.length <= PREVIEW_MAX_LENGTH) {
@@ -457,6 +453,11 @@ function ResultPreview({ onExportSnapshot }: { onExportSnapshot: () => void }) {
     return translatedText.slice(0, PREVIEW_MAX_LENGTH) + 
       `\n\n... (전체 내용은 ${translatedText.length.toLocaleString()}자입니다. 아래 '결과 다운로드' 버튼을 이용하세요)`;
   }, [translatedText]);
+
+  if (!translatedText && results.length === 0) return null;
+
+  const successCount = results.filter((r: { success: boolean }) => r.success).length;
+  const failCount = results.filter((r: { success: boolean }) => !r.success).length;
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
