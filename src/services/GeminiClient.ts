@@ -368,52 +368,57 @@ export class GeminiClient {
     try {
       // 새로운 SDK: client.models.list() 사용
       const response = await this.client.models.list();
-      
       const models: string[] = [];
+      
+      let modelList: any[] = [];
       
       // Response handling for different SDK versions/responses
       if (response && typeof response === 'object') {
-        // 1. Array in .models property (Standard response)
-        if ('models' in response && Array.isArray((response as any).models)) {
-           const modelList = (response as any).models;
-           for (const model of modelList) {
-             if (model.name?.includes('gemini')) {
-               models.push(model.name.replace('models/', ''));
-             }
-           }
+        // 1. Array directly (some versions)
+        if (Array.isArray(response)) {
+            modelList = response;
         } 
-        // 2. Async Iterable (Pagination or older SDK)
+        // 2. Object with models property (Standard response)
+        else if ('models' in response && Array.isArray((response as any).models)) {
+            modelList = (response as any).models;
+        }
+        // 3. Async Iterable (Pagination)
         else if (Symbol.asyncIterator in response) {
           try {
-            for await (const model of (response as any)) {
-                if (model.name?.includes('gemini')) {
-                  models.push(model.name.replace('models/', ''));
-                }
-            }
+             for await (const model of (response as any)) {
+               if (model.name?.includes('gemini')) {
+                 models.push(model.name.replace('models/', ''));
+               }
+             }
+             return models.length > 0 ? models : this.getDefaultModels();
           } catch (e) {
-            console.warn('Error iterating models:', e);
+             console.warn('Error iterating models:', e);
           }
         }
       }
+
+      // Process array if found
+      for (const model of modelList) {
+        if (model.name?.includes('gemini')) {
+          models.push(model.name.replace('models/', ''));
+        }
+      }
       
-      return models.length > 0 ? models : [
-        'gemini-2.0-flash',
-        'gemini-2.0-flash-lite',
-        'gemini-1.5-pro',
-        'gemini-1.5-flash',
-        'gemini-1.5-flash-8b',
-      ];
+      return models.length > 0 ? models : this.getDefaultModels();
     } catch (error) {
       console.error('모델 목록 조회 실패:', error);
-      // 기본 모델 목록 반환
-      return [
-        'gemini-2.0-flash',
-        'gemini-2.0-flash-lite',
-        'gemini-1.5-pro',
-        'gemini-1.5-flash',
-        'gemini-1.5-flash-8b',
-      ];
+      return this.getDefaultModels();
     }
+  }
+
+  private getDefaultModels(): string[] {
+    return [
+      'gemini-2.0-flash',
+      'gemini-2.0-flash-lite',
+      'gemini-1.5-pro',
+      'gemini-1.5-flash',
+      'gemini-1.5-flash-8b',
+    ];
   }
 
   /**

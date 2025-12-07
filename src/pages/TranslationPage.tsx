@@ -1,12 +1,14 @@
+
 // pages/TranslationPage.tsx
 // 설정 및 번역 페이지
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Play, Square, Save, Upload, Settings, Zap, Download, RefreshCw } from 'lucide-react';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTranslationStore } from '../stores/translationStore';
 import { useTranslation } from '../hooks/useTranslation';
 import { FileHandler } from '../utils/fileHandler';
+import { getGeminiClient } from '../services/GeminiClient';
 import { 
   Button, 
   Select, 
@@ -99,13 +101,44 @@ function FileUploadSection() {
  */
 function TranslationSettings() {
   const { config, updateConfig } = useSettingsStore();
+  const [modelOptions, setModelOptions] = useState<{ value: string; label: string }[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
 
-  const modelOptions = [
-    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
-    { value: 'gemini-2.0-flash-thinking-exp', label: 'Gemini 2.0 Flash Thinking' },
-    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
-    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
-  ];
+  // 모델 목록 로드
+  useEffect(() => {
+    const fetchModels = async () => {
+      setIsLoadingModels(true);
+      try {
+        const client = getGeminiClient();
+        const models = await client.getAvailableModels();
+        
+        const options = models.map(model => ({
+          value: model,
+          label: model
+        }));
+
+        // 현재 설정된 모델이 목록에 없으면 추가 (선택 유지)
+        if (config.modelName && !models.includes(config.modelName)) {
+          options.unshift({ value: config.modelName, label: config.modelName });
+        }
+
+        setModelOptions(options);
+      } catch (error) {
+        console.error('모델 목록 불러오기 실패:', error);
+        // 실패 시 기본 목록 제공
+        setModelOptions([
+          { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+          { value: 'gemini-2.0-flash-lite-preview-02-05', label: 'Gemini 2.0 Flash Lite' },
+          { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+          { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
+        ]);
+      } finally {
+        setIsLoadingModels(false);
+      }
+    };
+
+    fetchModels();
+  }, [config.modelName]);
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
@@ -117,10 +150,11 @@ function TranslationSettings() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* 모델 선택 */}
         <Select
-          label="모델"
+          label={isLoadingModels ? "모델 (목록 로딩 중...)" : "모델"}
           value={config.modelName}
           onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateConfig({ modelName: e.target.value })}
           options={modelOptions}
+          disabled={isLoadingModels}
         />
 
         {/* 청크 크기 */}
@@ -139,7 +173,7 @@ function TranslationSettings() {
           value={config.temperature}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ temperature: parseFloat(e.target.value) })}
           min={0}
-          max={1}
+          max={2.0}
           step={0.1}
           formatValue={(v: number) => v.toFixed(1)}
         />
