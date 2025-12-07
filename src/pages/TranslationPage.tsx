@@ -295,11 +295,42 @@ function TranslationSettings() {
         {/* 용어집 주입 */}
         <div className="md:col-span-2">
           <Checkbox
-            label="동적 용어집 주입"
+            label="동적 용어집 주입 (Dynamic Glossary Injection)"
             checked={config.enableDynamicGlossaryInjection}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ enableDynamicGlossaryInjection: e.target.checked })}
             description="번역 시 용어집 항목을 프롬프트에 자동으로 포함합니다."
           />
+          
+          {/* 용어집 주입 상세 설정 */}
+          {config.enableDynamicGlossaryInjection && (
+            <div className="mt-4 p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-4 animate-fadeIn">
+              <div className="flex items-center gap-2 mb-2">
+                <Settings className="w-4 h-4 text-gray-500" />
+                <h3 className="text-sm font-semibold text-gray-700">용어집 주입 상세 설정</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Input
+                  type="number"
+                  label="청크당 최대 주입 항목 수"
+                  value={config.maxGlossaryEntriesPerChunkInjection}
+                  onChange={(e) => updateConfig({ maxGlossaryEntriesPerChunkInjection: parseInt(e.target.value) || 0 })}
+                  min={0}
+                  helperText="한 번의 번역 요청에 포함할 최대 용어 수입니다."
+                />
+                <Input
+                  type="number"
+                  label="청크당 최대 주입 글자 수"
+                  value={config.maxGlossaryCharsPerChunkInjection}
+                  onChange={(e) => updateConfig({ maxGlossaryCharsPerChunkInjection: parseInt(e.target.value) || 0 })}
+                  min={0}
+                  helperText="용어집 컨텍스트가 차지할 수 있는 최대 글자 수입니다."
+                />
+              </div>
+              <div className="text-xs text-gray-500">
+                * 프롬프트 길이 제한을 초과하지 않도록 적절한 값을 설정하세요. 설정된 제한을 넘는 경우 등장 빈도가 높은 순으로 잘립니다.
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
