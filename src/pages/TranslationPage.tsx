@@ -1,7 +1,8 @@
+
 // pages/TranslationPage.tsx
 // 설정 및 번역 페이지
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { Play, Square, Save, Upload, Settings, Zap, Download, RefreshCw, RotateCcw, FileJson } from 'lucide-react';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTranslationStore } from '../stores/translationStore';
@@ -433,17 +434,29 @@ function ProgressSection() {
   );
 }
 
+const PREVIEW_MAX_LENGTH = 3000;
+
 /**
  * 번역 결과 미리보기 컴포넌트
+ * 대용량 텍스트 렌더링 시 브라우저 프리징 방지를 위해 일부만 보여줍니다.
  */
 function ResultPreview({ onExportSnapshot }: { onExportSnapshot: () => void }) {
-  const { translatedText, results, isRunning } = useTranslationStore();
+  const { translatedText, results } = useTranslationStore();
   const { downloadResult } = useTranslation();
 
   if (!translatedText && results.length === 0) return null;
 
   const successCount = results.filter((r: { success: boolean }) => r.success).length;
   const failCount = results.filter((r: { success: boolean }) => !r.success).length;
+
+  // 텍스트 미리보기 계산 (메모이제이션)
+  const previewText = useMemo(() => {
+    if (translatedText.length <= PREVIEW_MAX_LENGTH) {
+      return translatedText;
+    }
+    return translatedText.slice(0, PREVIEW_MAX_LENGTH) + 
+      `\n\n... (전체 내용은 ${translatedText.length.toLocaleString()}자입니다. 아래 '결과 다운로드' 버튼을 이용하세요)`;
+  }, [translatedText]);
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
@@ -492,13 +505,18 @@ function ResultPreview({ onExportSnapshot }: { onExportSnapshot: () => void }) {
       
       <div className="bg-gray-50 rounded-lg p-4 max-h-64 overflow-y-auto">
         <pre className="whitespace-pre-wrap text-sm text-gray-700">
-          {translatedText || '번역 결과가 여기에 표시됩니다...'}
+          {previewText || '번역 결과가 여기에 표시됩니다...'}
         </pre>
       </div>
       
-      <p className="text-sm text-gray-500 mt-2">
-        총 {translatedText.length.toLocaleString()}자
-      </p>
+      <div className="flex justify-between items-center mt-2 text-sm text-gray-500">
+        <span>총 {translatedText.length.toLocaleString()}자</span>
+        {translatedText.length > PREVIEW_MAX_LENGTH && (
+          <span className="text-orange-600 bg-orange-50 px-2 py-1 rounded text-xs">
+            ⚠️ 성능을 위해 일부만 미리보기로 표시됩니다.
+          </span>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,8 +1,9 @@
+
 // pages/ReviewPage.tsx
 // 검토 및 수정 페이지
 
-import React, { useState, useMemo } from 'react';
-import { CheckCircle, AlertTriangle, RefreshCw, Copy, Eye, EyeOff, TrendingUp, AlertCircle } from 'lucide-react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { CheckCircle, AlertTriangle, RefreshCw, Copy, Eye, EyeOff, TrendingUp, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useTranslationStore } from '../stores/translationStore';
 import type { TranslationResult } from '../types/dtos';
 import { Button, IconButton, ButtonGroup } from '../components';
@@ -26,9 +27,9 @@ function StatusBadge({ success }: { success: boolean }) {
 }
 
 /**
- * 청크 카드 컴포넌트
+ * 청크 카드 컴포넌트 (React.memo 적용)
  */
-function ChunkCard({ 
+const ChunkCard = React.memo(function ChunkCard({ 
   result, 
   isExpanded, 
   onToggle,
@@ -36,16 +37,26 @@ function ChunkCard({
 }: { 
   result: TranslationResult;
   isExpanded: boolean;
-  onToggle: () => void;
-  onRetry: () => void;
+  onToggle: (index: number) => void;
+  onRetry: (index: number) => void;
 }) {
   const [copyFeedback, setCopyFeedback] = useState(false);
 
-  const handleCopy = async () => {
+  const handleCopy = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
     await navigator.clipboard.writeText(result.translatedText);
     setCopyFeedback(true);
     setTimeout(() => setCopyFeedback(false), 2000);
-  };
+  }, [result.translatedText]);
+
+  const handleRetryClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onRetry(result.chunkIndex);
+  }, [onRetry, result.chunkIndex]);
+
+  const handleToggleClick = useCallback(() => {
+    onToggle(result.chunkIndex);
+  }, [onToggle, result.chunkIndex]);
 
   // 길이 비율 계산
   const ratio = result.originalText.length > 0 
@@ -59,7 +70,7 @@ function ChunkCard({
         className={`flex items-center justify-between px-4 py-3 cursor-pointer ${
           result.success ? 'bg-gray-50 hover:bg-gray-100' : 'bg-red-50 hover:bg-red-100'
         }`}
-        onClick={onToggle}
+        onClick={handleToggleClick}
       >
         <div className="flex items-center gap-3">
           <span className="font-medium text-gray-700">청크 #{result.chunkIndex + 1}</span>
@@ -71,10 +82,7 @@ function ChunkCard({
         <div className="flex items-center gap-2">
           {!result.success && (
             <IconButton
-              onClick={(e) => {
-                e.stopPropagation();
-                onRetry();
-              }}
+              onClick={handleRetryClick}
               title="재번역"
               className="text-blue-600 hover:text-blue-800"
               icon={<RefreshCw className="w-4 h-4" />}
@@ -82,10 +90,7 @@ function ChunkCard({
             />
           )}
           <IconButton
-            onClick={(e) => {
-              e.stopPropagation();
-              handleCopy();
-            }}
+            onClick={handleCopy}
             title="복사"
             className="text-gray-600 hover:text-gray-800"
             icon={copyFeedback ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
@@ -124,12 +129,12 @@ function ChunkCard({
       )}
     </div>
   );
-}
+});
 
 /**
  * 검토 통계 컴포넌트
  */
-function ReviewStats({ results }: { results: TranslationResult[] }) {
+const ReviewStats = React.memo(function ReviewStats({ results }: { results: TranslationResult[] }) {
   const stats = useMemo(() => {
     const successful = results.filter(r => r.success);
     const failed = results.filter(r => !r.success);
@@ -259,7 +264,7 @@ function ReviewStats({ results }: { results: TranslationResult[] }) {
       )}
     </div>
   );
-}
+});
 
 /**
  * 필터 컴포넌트
@@ -299,6 +304,8 @@ function ReviewFilter({
   );
 }
 
+const ITEMS_PER_PAGE = 20;
+
 /**
  * 검토 및 수정 페이지 메인 컴포넌트
  */
@@ -306,6 +313,7 @@ export function ReviewPage() {
   const { results } = useTranslationStore();
   const [filter, setFilter] = useState<'all' | 'success' | 'failed'>('all');
   const [expandedChunks, setExpandedChunks] = useState<Set<number>>(new Set());
+  const [currentPage, setCurrentPage] = useState(1);
 
   // 필터링된 결과
   const filteredResults = useMemo(() => {
@@ -320,7 +328,20 @@ export function ReviewPage() {
     }
   }, [results, filter]);
 
-  const toggleExpand = (index: number) => {
+  // 필터 변경 시 페이지 초기화
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter]);
+
+  // 페이지네이션
+  const totalPages = Math.ceil(filteredResults.length / ITEMS_PER_PAGE);
+  const paginatedResults = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredResults.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredResults, currentPage]);
+
+  // 콜백 최적화
+  const toggleExpand = useCallback((index: number) => {
     setExpandedChunks(prev => {
       const newSet = new Set(prev);
       if (newSet.has(index)) {
@@ -330,16 +351,23 @@ export function ReviewPage() {
       }
       return newSet;
     });
-  };
+  }, []);
 
-  const collapseAll = () => {
+  const collapseAll = useCallback(() => {
     setExpandedChunks(new Set());
-  };
+  }, []);
 
-  const handleRetry = (chunkIndex: number) => {
-    // TODO: 재번역 로직 구현
+  const handleRetry = useCallback((chunkIndex: number) => {
     console.log('재번역 요청:', chunkIndex);
-  };
+    // TODO: 재번역 로직 연결
+  }, []);
+
+  const handlePageChange = useCallback((newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setCurrentPage(newPage);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [totalPages]);
 
   return (
     <div className="space-y-6 fade-in">
@@ -378,18 +406,45 @@ export function ReviewPage() {
             {/* 필터 */}
             <ReviewFilter filter={filter} setFilter={setFilter} />
 
-            {/* 청크 목록 */}
+            {/* 청크 목록 (페이지네이션 적용) */}
             <div className="space-y-3">
-              {filteredResults.map(result => (
+              {paginatedResults.map(result => (
                 <ChunkCard
                   key={result.chunkIndex}
                   result={result}
                   isExpanded={expandedChunks.has(result.chunkIndex)}
-                  onToggle={() => toggleExpand(result.chunkIndex)}
-                  onRetry={() => handleRetry(result.chunkIndex)}
+                  onToggle={toggleExpand}
+                  onRetry={handleRetry}
                 />
               ))}
             </div>
+
+            {/* 페이지네이션 컨트롤 */}
+            {totalPages > 1 && (
+              <div className="flex justify-center items-center gap-4 mt-6">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage === 1}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  이전
+                </Button>
+                <span className="text-sm text-gray-600">
+                  {currentPage} / {totalPages}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                >
+                  다음
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            )}
 
             {filteredResults.length === 0 && (
               <div className="text-center py-8 text-gray-500">
