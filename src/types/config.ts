@@ -184,15 +184,15 @@ export const defaultConfig: AppConfig = {
   contentSafetySplitBySentences: true,
   
   // 용어집 설정
-  enableDynamicGlossaryInjection: false,
-  maxGlossaryEntriesPerChunkInjection: 3,
+  enableDynamicGlossaryInjection: true,
+  maxGlossaryEntriesPerChunkInjection: 20,
   maxGlossaryCharsPerChunkInjection: 500,
   glossaryExtractionTemperature: 0.3,
   glossarySamplingRatio: 10,
   glossaryMaxTotalEntries: 9999,
   glossaryTargetLanguageCode: 'ko',
   glossaryTargetLanguageName: 'Korean',
-  glossaryChunkSize: 8000,
+  glossaryChunkSize: 30000,
   glossaryExtractionPrompt: DEFAULT_GLOSSARY_EXTRACTION_PROMPT,
   
   // 후처리 설정

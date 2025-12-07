@@ -152,8 +152,20 @@ export class TranslationService {
 
       // 용어집 주입 로깅
       if (glossaryContext !== '용어집 컨텍스트 없음') {
-        const entryCount = glossaryContext.split('\n').length;
+        const entries = glossaryContext.split('\n');
+        const entryCount = entries.length;
         this.log('info', `청크 ${chunkIndex + 1}: 동적 용어집 ${entryCount}개 항목이 주입되었습니다.`);
+        
+        // 상위 3개 항목 로깅 (추가된 기능)
+        const topItems = entries.slice(0, 3);
+        topItems.forEach((item) => {
+          // "- " 제거하여 깔끔하게 출력
+          this.log('info', `   └ ${item.replace(/^- /, '')}`);
+        });
+
+        if (entryCount > 3) {
+          this.log('info', `   └ ... 외 ${entryCount - 3}개`);
+        }
       }
 
       prompt = prompt.replace('{{glossary_context}}', glossaryContext);
