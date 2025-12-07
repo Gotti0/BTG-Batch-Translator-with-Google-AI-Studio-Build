@@ -105,3 +105,34 @@ export interface LogEntry {
   message: string;
   timestamp: Date;
 }
+
+/**
+ * 작업 이어하기(Resume)를 위한 스냅샷 데이터 구조 (Snake Case)
+ * 외부 호환성을 위해 스네이크 케이스를 사용합니다.
+ */
+export interface TranslationSnapshot {
+  meta: {
+    version: string;
+    created_at: string;
+    app_version: string;
+  };
+  source_info: {
+    file_name: string;
+    file_size: number;
+  };
+  config: {
+    chunk_size: number;
+    model_name: string;
+    prompt_template?: string;
+  };
+  source_text: string;
+  progress: {
+    total_chunks: number;
+    processed_chunks: number;
+  };
+  translated_chunks: Record<string, {
+    original_text: string;
+    translated_text: string;
+    status: string;
+  }>;
+}

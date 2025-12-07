@@ -1,9 +1,8 @@
-
 // pages/TranslationPage.tsx
 // 설정 및 번역 페이지
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { Play, Square, Save, Upload, Settings, Zap, Download, RefreshCw, RotateCcw } from 'lucide-react';
+import { Play, Square, Save, Upload, Settings, Zap, Download, RefreshCw, RotateCcw, FileJson } from 'lucide-react';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTranslationStore } from '../stores/translationStore';
 import { useTranslation } from '../hooks/useTranslation';
@@ -26,17 +25,27 @@ import type { FileContent } from '../types/dtos';
 /**
  * 파일 업로드 영역 컴포넌트
  */
-function FileUploadSection() {
-  const { inputFiles, addInputFiles, removeInputFile, clearInputFiles } = useTranslationStore();
+function FileUploadSection({ onImportSnapshot }: { onImportSnapshot: (file: File) => void }) {
+  const { inputFiles, addInputFiles, removeInputFile, clearInputFiles, addLog } = useTranslationStore();
   
-  // File 객체를 FileContent로 변환하여 스토어에 추가
+  // File 객체를 FileContent로 변환하여 스토어에 추가 또는 스냅샷 복구
   const handleFilesSelected = useCallback(async (files: File[]) => {
-    const fileContents: FileContent[] = [];
+    const textFiles: FileContent[] = [];
+    let snapshotFound = false;
     
     for (const file of files) {
+      // JSON 파일(스냅샷) 감지
+      if (file.name.endsWith('.json')) {
+        addLog('info', `스냅샷 파일 감지: ${file.name}`);
+        onImportSnapshot(file);
+        snapshotFound = true;
+        // 스냅샷이 있으면 텍스트 파일 처리는 중단 (단일 세션 복구 우선)
+        return; 
+      }
+
       try {
         const content = await file.text();
-        fileContents.push({
+        textFiles.push({
           name: file.name,
           content,
           size: file.size,
@@ -47,10 +56,10 @@ function FileUploadSection() {
       }
     }
     
-    if (fileContents.length > 0) {
-      addInputFiles(fileContents);
+    if (textFiles.length > 0 && !snapshotFound) {
+      addInputFiles(textFiles);
     }
-  }, [addInputFiles]);
+  }, [addInputFiles, addLog, onImportSnapshot]);
 
   const handleFileRemove = useCallback((index: number) => {
     removeInputFile(index);
@@ -68,7 +77,7 @@ function FileUploadSection() {
       </h2>
       
       <FileUpload
-        accept={['.txt']}
+        accept={['.txt', '.json']}
         multiple={true}
         maxSize={50 * 1024 * 1024}
         onFilesSelected={handleFilesSelected}
@@ -76,6 +85,9 @@ function FileUploadSection() {
         onFileRemove={handleFileRemove}
         height="h-32"
       />
+      <p className="text-xs text-gray-500 mt-2 ml-1">
+        * 텍스트 파일(.txt)을 업로드하여 새 작업을 시작하거나, 작업 파일(.json)을 업로드하여 이어서 진행할 수 있습니다.
+      </p>
 
       {/* 전체 삭제 버튼 */}
       {inputFiles.length > 0 && (
@@ -424,8 +436,8 @@ function ProgressSection() {
 /**
  * 번역 결과 미리보기 컴포넌트
  */
-function ResultPreview() {
-  const { translatedText, results } = useTranslationStore();
+function ResultPreview({ onExportSnapshot }: { onExportSnapshot: () => void }) {
+  const { translatedText, results, isRunning } = useTranslationStore();
   const { downloadResult } = useTranslation();
 
   if (!translatedText && results.length === 0) return null;
@@ -438,13 +450,25 @@ function ResultPreview() {
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-semibold text-gray-800">📄 번역 결과</h2>
         <div className="flex gap-2">
+          {results.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              leftIcon={<FileJson className="w-4 h-4" />}
+              onClick={onExportSnapshot}
+              title="현재 진행 상황을 파일로 저장하여 나중에 이어할 수 있습니다."
+            >
+              작업 저장
+            </Button>
+          )}
           <Button
             variant="primary"
+            size="sm"
             leftIcon={<Download className="w-4 h-4" />}
             onClick={() => downloadResult()}
             disabled={!translatedText}
           >
-            다운로드
+            결과 다운로드
           </Button>
         </div>
       </div>
@@ -494,6 +518,8 @@ export function TranslationPage() {
     executeTranslation,
     cancelTranslation,
     retryFailedChunks,
+    exportSnapshot,
+    importSnapshot,
   } = useTranslation();
 
   const handleStartTranslation = useCallback(() => {
@@ -515,8 +541,8 @@ export function TranslationPage() {
 
   return (
     <div className="space-y-6 fade-in">
-      {/* 파일 업로드 */}
-      <FileUploadSection />
+      {/* 파일 업로드 (스냅샷 복구 기능 포함) */}
+      <FileUploadSection onImportSnapshot={importSnapshot} />
       
       {/* 번역 설정 */}
       <TranslationSettings />
@@ -527,8 +553,8 @@ export function TranslationPage() {
       {/* 진행률 */}
       <ProgressSection />
       
-      {/* 번역 결과 */}
-      <ResultPreview />
+      {/* 번역 결과 (스냅샷 저장 버튼 포함) */}
+      <ResultPreview onExportSnapshot={exportSnapshot} />
       
       {/* 액션 버튼 */}
       <div className="flex gap-4">
@@ -542,7 +568,7 @@ export function TranslationPage() {
               leftIcon={<Play className="w-5 h-5" />}
               onClick={handleStartTranslation}
             >
-              번역 시작
+              번역 시작 {inputFiles.length > 0 && '(또는 이어하기)'}
             </Button>
             
             {hasFailedChunks && (

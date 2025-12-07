@@ -1,5 +1,5 @@
 {
-  "name": "BTG - Batch Translator for Gemini v0.0.2",
+  "name": "BTG - Batch Translator for Gemini",
   "description": "A React-based migration of the BTG batch translation tool, featuring Gemini API integration for high-quality document translation, glossary management, and quality assurance metrics.",
   "requestFramePermissions": []
 }

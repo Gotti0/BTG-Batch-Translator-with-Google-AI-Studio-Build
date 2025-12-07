@@ -77,9 +77,9 @@ function ChunkCard({
               }}
               title="재번역"
               className="text-blue-600 hover:text-blue-800"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </IconButton>
+              icon={<RefreshCw className="w-4 h-4" />}
+              aria-label="재번역"
+            />
           )}
           <IconButton
             onClick={(e) => {
@@ -88,9 +88,9 @@ function ChunkCard({
             }}
             title="복사"
             className="text-gray-600 hover:text-gray-800"
-          >
-            {copyFeedback ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
-          </IconButton>
+            icon={copyFeedback ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+            aria-label="복사"
+          />
           {isExpanded ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
         </div>
       </div>
@@ -332,10 +332,6 @@ export function ReviewPage() {
     });
   };
 
-  const expandAll = () => {
-    setExpandedChunks(new Set(filteredResults.map(r => r.chunkIndex)));
-  };
-
   const collapseAll = () => {
     setExpandedChunks(new Set());
   };
@@ -359,14 +355,8 @@ export function ReviewPage() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={expandAll}
-              >
-                모두 펼치기
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
                 onClick={collapseAll}
+                disabled={expandedChunks.size === 0}
               >
                 모두 접기
               </Button>

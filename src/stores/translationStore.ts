@@ -46,6 +46,7 @@ interface TranslationState {
   pauseTranslation: () => void;
   resumeTranslation: () => void;
   updateProgress: (progress: TranslationJobProgress) => void;
+  restoreSession: (files: FileContent[], results: TranslationResult[], progress: TranslationJobProgress) => void;
   
   // === 결과 액션 ===
   addResult: (result: TranslationResult) => void;
@@ -151,6 +152,25 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   },
   
   updateProgress: (progress) => set({ progress }),
+  
+  // 세션 복구 액션
+  restoreSession: (files, results, progress) => {
+    // 번역된 텍스트 합치기
+    const sortedResults = [...results].sort((a, b) => a.chunkIndex - b.chunkIndex);
+    const combinedText = sortedResults
+      .filter(r => r.success)
+      .map(r => r.translatedText)
+      .join('');
+      
+    set({
+      inputFiles: files,
+      results: results,
+      progress: progress,
+      translatedText: combinedText,
+      isRunning: false,
+      isPaused: false,
+    });
+  },
   
   // === 결과 액션 ===
   addResult: (result) => set((state) => ({

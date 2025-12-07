@@ -321,16 +321,34 @@ export class TranslationService {
 
   /**
    * 전체 텍스트 번역
+   * 
+   * @param fullText - 전체 원문 텍스트
+   * @param onProgress - 진행률 콜백
+   * @param existingResults - (옵션) 이미 번역된 결과. 제공되면 해당 청크는 스킵합니다.
    */
   async translateText(
     fullText: string,
-    onProgress?: ProgressCallback
+    onProgress?: ProgressCallback,
+    existingResults?: TranslationResult[]
   ): Promise<TranslationResult[]> {
     this.stopRequested = false;
 
     // 청크 분할
     const chunks = this.chunkService.splitTextIntoChunks(fullText, this.config.chunkSize);
     this.log('info', `총 ${chunks.length}개 청크로 분할됨`);
+
+    // 기존 결과 맵핑 (청크 인덱스 -> 결과)
+    const existingMap = new Map<number, TranslationResult>();
+    if (existingResults) {
+      for (const res of existingResults) {
+        if (res.success) {
+          existingMap.set(res.chunkIndex, res);
+        }
+      }
+      if (existingMap.size > 0) {
+        this.log('info', `${existingMap.size}개의 기존 번역 결과를 발견했습니다. 스킵합니다.`);
+      }
+    }
 
     const results: TranslationResult[] = [];
 
@@ -342,7 +360,18 @@ export class TranslationService {
       currentStatusMessage: '번역 시작...',
     };
 
-    onProgress?.(progress);
+    // 초기 상태 반영 (이미 완료된 청크들 카운트)
+    if (existingMap.size > 0) {
+      for (let i = 0; i < chunks.length; i++) {
+        if (existingMap.has(i)) {
+          progress.processedChunks++;
+          progress.successfulChunks++;
+        }
+      }
+      onProgress?.(progress);
+    } else {
+      onProgress?.(progress);
+    }
 
     for (let i = 0; i < chunks.length; i++) {
       // 중단 체크
@@ -351,6 +380,20 @@ export class TranslationService {
         onProgress?.(progress);
         this.log('warning', '번역이 사용자에 의해 중단되었습니다.');
         break;
+      }
+
+      // 이미 번역된 청크인지 확인
+      if (existingMap.has(i)) {
+        const existingResult = existingMap.get(i)!;
+        
+        // 원문 텍스트가 변경되었는지 확인 (옵션)
+        if (existingResult.originalText.length === chunks[i].length) {
+          results.push(existingResult);
+          this.log('debug', `청크 ${i + 1} 스킵 (이미 완료됨)`);
+          continue;
+        } else {
+          this.log('warning', `청크 ${i + 1}의 기존 결과가 있으나 원문 길이가 일치하지 않아 재번역합니다.`);
+        }
       }
 
       // 진행 상황 업데이트
