@@ -75,10 +75,10 @@ function ChunkCard({
                 onRetry();
               }}
               title="재번역"
+              aria-label="재번역"
+              icon={<RefreshCw className="w-4 h-4" />}
               className="text-blue-600 hover:text-blue-800"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </IconButton>
+            />
           )}
           <IconButton
             onClick={(e) => {
@@ -86,10 +86,10 @@ function ChunkCard({
               handleCopy();
             }}
             title="복사"
+            aria-label="복사"
+            icon={copyFeedback ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
             className="text-gray-600 hover:text-gray-800"
-          >
-            {copyFeedback ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
-          </IconButton>
+          />
           {isExpanded ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
         </div>
       </div>

@@ -367,12 +367,42 @@ export class GeminiClient {
   async getAvailableModels(): Promise<string[]> {
     try {
       // 새로운 SDK: client.models.list() 사용
-      const models = await this.client.models.list();
+      const response = await this.client.models.list();
       
-      // Gemini 모델만 필터링
-      return models
-        .filter((model: any) => model.name?.includes('gemini'))
-        .map((model: any) => model.name?.replace('models/', '') || '');
+      const models: string[] = [];
+      
+      // Response handling for different SDK versions/responses
+      if (response && typeof response === 'object') {
+        // 1. Array in .models property (Standard response)
+        if ('models' in response && Array.isArray((response as any).models)) {
+           const modelList = (response as any).models;
+           for (const model of modelList) {
+             if (model.name?.includes('gemini')) {
+               models.push(model.name.replace('models/', ''));
+             }
+           }
+        } 
+        // 2. Async Iterable (Pagination or older SDK)
+        else if (Symbol.asyncIterator in response) {
+          try {
+            for await (const model of (response as any)) {
+                if (model.name?.includes('gemini')) {
+                  models.push(model.name.replace('models/', ''));
+                }
+            }
+          } catch (e) {
+            console.warn('Error iterating models:', e);
+          }
+        }
+      }
+      
+      return models.length > 0 ? models : [
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-lite',
+        'gemini-1.5-pro',
+        'gemini-1.5-flash',
+        'gemini-1.5-flash-8b',
+      ];
     } catch (error) {
       console.error('모델 목록 조회 실패:', error);
       // 기본 모델 목록 반환

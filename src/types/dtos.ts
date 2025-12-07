@@ -46,6 +46,9 @@ export interface GlossaryEntry {
   translatedKeyword: string;
   targetLanguage: string;
   occurrenceCount: number;
+  id?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 /**

@@ -183,7 +183,7 @@ function GlossaryRow({ entry }: { entry: GlossaryEntry }) {
     return (
       <tr className="bg-yellow-50">
         <td className="px-4 py-2">
-          <Checkbox checked={isSelected} disabled />
+          <Checkbox checked={isSelected} disabled label="선택" />
         </td>
         <td className="px-4 py-2">
           <Input
@@ -209,12 +209,8 @@ function GlossaryRow({ entry }: { entry: GlossaryEntry }) {
         </td>
         <td className="px-4 py-2">
           <div className="flex gap-1">
-            <IconButton onClick={handleSave} title="저장" className="text-green-600 hover:text-green-800">
-              <Check className="w-4 h-4" />
-            </IconButton>
-            <IconButton onClick={handleCancel} title="취소" className="text-red-600 hover:text-red-800">
-              <X className="w-4 h-4" />
-            </IconButton>
+            <IconButton onClick={handleSave} title="저장" aria-label="저장" icon={<Check className="w-4 h-4" />} className="text-green-600 hover:text-green-800" />
+            <IconButton onClick={handleCancel} title="취소" aria-label="취소" icon={<X className="w-4 h-4" />} className="text-red-600 hover:text-red-800" />
           </div>
         </td>
       </tr>
@@ -237,17 +233,17 @@ function GlossaryRow({ entry }: { entry: GlossaryEntry }) {
           <IconButton
             onClick={() => setIsEditing(true)}
             title="수정"
+            aria-label="수정"
+            icon={<Edit2 className="w-4 h-4" />}
             className="text-blue-600 hover:text-blue-800"
-          >
-            <Edit2 className="w-4 h-4" />
-          </IconButton>
+          />
           <IconButton
             onClick={() => removeEntry(entry.keyword)}
             title="삭제"
+            aria-label="삭제"
+            icon={<Trash2 className="w-4 h-4" />}
             className="text-red-600 hover:text-red-800"
-          >
-            <Trash2 className="w-4 h-4" />
-          </IconButton>
+          />
         </div>
       </td>
     </tr>

@@ -263,8 +263,8 @@ Textarea.displayName = 'Textarea';
  * Checkbox Props
  */
 export interface CheckboxProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'> {
-  /** 라벨 */
-  label: string;
+  /** 라벨 (Optional) */
+  label?: string;
   /** 설명 */
   description?: string;
 }
@@ -296,17 +296,21 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(({
         `}
         {...props}
       />
-      <div className="ml-2">
-        <label 
-          htmlFor={checkboxId}
-          className="text-sm font-medium text-gray-700 cursor-pointer"
-        >
-          {label}
-        </label>
-        {description && (
-          <p className="text-sm text-gray-500">{description}</p>
-        )}
-      </div>
+      {(label || description) && (
+        <div className="ml-2">
+          {label && (
+            <label 
+              htmlFor={checkboxId}
+              className="text-sm font-medium text-gray-700 cursor-pointer"
+            >
+              {label}
+            </label>
+          )}
+          {description && (
+            <p className="text-sm text-gray-500">{description}</p>
+          )}
+        </div>
+      )}
     </div>
   );
 });
