@@ -1,3 +1,4 @@
+
 // services/TranslationService.ts
 // Python domain/translation_service.py 의 TypeScript 변환
 
@@ -6,7 +7,7 @@ import { ChunkService } from './ChunkService';
 import type { 
   GlossaryEntry, 
   TranslationResult, 
-  TranslationJobProgress,
+  TranslationJobProgress, 
   LogEntry 
 } from '../types/dtos';
 import type { AppConfig, PrefillHistoryItem } from '../types/config';
@@ -264,56 +265,85 @@ export class TranslationService {
   }
 
   /**
-   * 작은 청크로 분할하여 재시도
+   * 작은 청크로 분할하여 재시도 (개선된 하이브리드 로직)
    */
   private async retryWithSmallerChunks(
     chunkText: string,
     originalIndex: number,
     currentAttempt: number = 1
   ): Promise<TranslationResult> {
+    // 1. 최대 시도 횟수 초과 체크
     if (currentAttempt > this.config.maxContentSafetySplitAttempts) {
-      this.log('error', `최대 분할 시도 횟수(${this.config.maxContentSafetySplitAttempts}) 초과`);
+      this.log('error', `최대 분할 시도 횟수(${this.config.maxContentSafetySplitAttempts}) 도달. 번역 실패.`);
       return {
         chunkIndex: originalIndex,
         originalText: chunkText,
-        translatedText: `[번역 실패: 최대 분할 시도 초과]`,
+        translatedText: `[번역 오류로 인한 실패: 최대 분할 시도 초과]`,
         success: false,
         error: '콘텐츠 안전 문제로 인한 최대 분할 시도 초과',
       };
     }
 
+    // 2. 최소 청크 크기 체크
     if (chunkText.trim().length <= this.config.minContentSafetyChunkSize) {
-      this.log('warning', `최소 청크 크기 도달. 번역 불가: ${chunkText.slice(0, 50)}...`);
+      const preview = chunkText.slice(0, 50).replace(/\n/g, ' ');
+      this.log('warning', `최소 청크 크기에 도달했지만 여전히 오류 발생: ${preview}...`);
       return {
         chunkIndex: originalIndex,
         originalText: chunkText,
-        translatedText: `[번역 실패: ${chunkText.slice(0, 30)}...]`,
+        translatedText: `[번역 오류로 인한 실패: ${chunkText.slice(0, 30)}...]`,
         success: false,
         error: '최소 청크 크기에서도 번역 실패',
       };
     }
 
-    this.log('info', `청크 분할 시도 #${currentAttempt}`);
+    // 3. 상세 로깅
+    this.log('info', `📊 청크 분할 시도 #${currentAttempt} (깊이: ${currentAttempt - 1})`);
+    this.log('info', `   📏 원본 크기: ${chunkText.length} 글자`);
+    this.log('info', `   🎯 목표 크기: ${Math.floor(chunkText.length / 2)} 글자`);
+    const contentPreview = chunkText.slice(0, 100).replace(/\n/g, ' ');
+    this.log('info', `   📝 내용 미리보기: ${contentPreview}...`);
 
-    // 분할
-    const subChunks = this.config.contentSafetySplitBySentences
-      ? this.chunkService.splitChunkBySentences(chunkText, 2)
-      : this.chunkService.splitChunkRecursively(
-          chunkText,
-          Math.ceil(chunkText.length / 2),
-          this.config.minContentSafetyChunkSize,
-          this.config.maxContentSafetySplitAttempts
-        );
+    // 4. 분할 시도 (1단계: 크기 기반 재귀 분할)
+    // 우선 줄바꿈 기준으로 절반 크기로 나누기를 시도합니다.
+    let subChunks = this.chunkService.splitChunkRecursively(
+      chunkText,
+      Math.floor(chunkText.length / 2),
+      this.config.minContentSafetyChunkSize,
+      1, // 1단계만 깊이 제한 (여기서 재귀하지 않고 리스트만 받음)
+      0
+    );
 
+    // 5. 분할 시도 (2단계: 문장 기반 분할)
+    // 크기 기반 분할이 효과가 없었다면(덩어리가 그대로라면), 문장 단위로 강제 분할합니다.
     if (subChunks.length <= 1) {
-      // 분할 실패 시 강제 분할
-      const halfLength = Math.ceil(chunkText.length / 2);
-      subChunks.length = 0;
-      subChunks.push(chunkText.slice(0, halfLength), chunkText.slice(halfLength));
+      this.log('info', "크기 기반 분할 실패. 문장 기반 분할 시도.");
+      subChunks = this.chunkService.splitChunkBySentences(chunkText, 1);
     }
 
-    this.log('info', `${subChunks.length}개 서브 청크로 분할됨`);
+    // 6. 분할 시도 (3단계: 강제 하드 분할)
+    // 문장 분할조차 실패했다면(문장부호가 없는 경우 등), 강제로 문자열을 반으로 자릅니다.
+    if (subChunks.length <= 1) {
+      this.log('warning', "문장 기반 분할 실패. 강제 하드 분할 시도.");
+      const halfLength = Math.ceil(chunkText.length / 2);
+      subChunks = [chunkText.slice(0, halfLength), chunkText.slice(halfLength)];
+    }
+    
+    // 여전히 분할되지 않았다면 포기
+    if (subChunks.length <= 1) {
+        this.log('error', "청크 분할 실패. 번역 포기.");
+        return {
+            chunkIndex: originalIndex,
+            originalText: chunkText,
+            translatedText: `[분할 불가능한 오류 발생 콘텐츠: ${chunkText.slice(0, 30)}...]`,
+            success: false,
+            error: '분할 불가능',
+        };
+    }
 
+    this.log('info', `🔄 분할 완료: ${subChunks.length}개 서브 청크 생성`);
+
+    // 7. 각 서브 청크 순차 처리
     const translatedParts: string[] = [];
 
     for (let i = 0; i < subChunks.length; i++) {
@@ -323,9 +353,10 @@ export class TranslationService {
       }
 
       try {
+        // 분할된 조각으로 번역 시도
         const result = await this.translateChunk(subChunks[i], originalIndex);
         
-        // 중요: 청크 번역 후 중단 상태 재확인 (재귀적 취소 전파를 위해)
+        // 중단 확인
         if (this.stopRequested) {
             translatedParts.push('[중단됨]');
             break;
@@ -334,7 +365,8 @@ export class TranslationService {
         if (result.success) {
           translatedParts.push(result.translatedText);
         } else {
-          // 재귀적 재시도
+          // 실패 시 해당 조각에 대해 재귀 호출 (다음 시도 횟수 증가)
+          this.log('info', `서브 청크 ${i+1}/${subChunks.length} 실패. 재귀 분할 진입.`);
           const retryResult = await this.retryWithSmallerChunks(
             subChunks[i],
             originalIndex,
@@ -343,6 +375,8 @@ export class TranslationService {
           translatedParts.push(retryResult.translatedText);
         }
       } catch (error) {
+        // 예외 발생 시에도 재귀 시도
+        this.log('error', `서브 청크 처리 중 예외 발생. 재귀 분할 시도.`);
         const retryResult = await this.retryWithSmallerChunks(
           subChunks[i],
           originalIndex,
@@ -355,7 +389,7 @@ export class TranslationService {
     return {
       chunkIndex: originalIndex,
       originalText: chunkText,
-      translatedText: translatedParts.join('\n'),
+      translatedText: translatedParts.join('\n'), // 문장 간 자연스러운 연결을 위해 줄바꿈 사용
       success: true,
     };
   }
