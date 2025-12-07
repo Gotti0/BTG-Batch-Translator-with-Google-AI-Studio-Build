@@ -75,10 +75,19 @@ export function App() {
       
       {/* 메인 콘텐츠 */}
       <main className="max-w-7xl mx-auto px-4 py-6">
-        {activeTab === 'translation' && <TranslationPage />}
-        {activeTab === 'glossary' && <GlossaryPage />}
-        {activeTab === 'review' && <ReviewPage />}
-        {activeTab === 'log' && <LogPage />}
+        {/* 탭 전환 시 컴포넌트 상태 유지를 위해 hidden 클래스 사용 (Unmount 방지) */}
+        <div className={activeTab === 'translation' ? 'block' : 'hidden'}>
+          <TranslationPage />
+        </div>
+        <div className={activeTab === 'glossary' ? 'block' : 'hidden'}>
+          <GlossaryPage />
+        </div>
+        <div className={activeTab === 'review' ? 'block' : 'hidden'}>
+          <ReviewPage />
+        </div>
+        <div className={activeTab === 'log' ? 'block' : 'hidden'}>
+          <LogPage />
+        </div>
       </main>
       
       {/* 푸터 */}
