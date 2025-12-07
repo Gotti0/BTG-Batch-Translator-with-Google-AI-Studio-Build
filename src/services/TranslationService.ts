@@ -138,7 +138,7 @@ export class TranslationService {
   /**
    * 프롬프트 구성
    */
-  private constructPrompt(chunkText: string): string {
+  private constructPrompt(chunkText: string, chunkIndex: number): string {
     let prompt = this.config.prompts;
 
     // 용어집 컨텍스트 주입
@@ -149,6 +149,13 @@ export class TranslationService {
         this.config.maxGlossaryEntriesPerChunkInjection,
         this.config.maxGlossaryCharsPerChunkInjection
       );
+
+      // 용어집 주입 로깅
+      if (glossaryContext !== '용어집 컨텍스트 없음') {
+        const entryCount = glossaryContext.split('\n').length;
+        this.log('info', `청크 ${chunkIndex + 1}: 동적 용어집 ${entryCount}개 항목이 주입되었습니다.`);
+      }
+
       prompt = prompt.replace('{{glossary_context}}', glossaryContext);
     } else if (prompt.includes('{{glossary_context}}')) {
       prompt = prompt.replace('{{glossary_context}}', '용어집 컨텍스트 없음');
@@ -178,7 +185,7 @@ export class TranslationService {
       };
     }
 
-    const prompt = this.constructPrompt(chunkText);
+    const prompt = this.constructPrompt(chunkText, chunkIndex);
     const textPreview = chunkText.slice(0, 100).replace(/\n/g, ' ');
     this.log('info', `청크 ${chunkIndex + 1} 번역 시작: "${textPreview}..."`);
 
