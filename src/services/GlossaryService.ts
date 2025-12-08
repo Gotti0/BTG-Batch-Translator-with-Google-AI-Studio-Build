@@ -231,7 +231,7 @@ ${segmentText}
   }
 
   /**
-   * 표본 세그먼트 선택
+   * 표본 세그먼트 선택 (무작위 샘플링으로 변경됨)
    */
   private selectSampleSegments(allSegments: string[]): string[] {
     const samplingRatio = (this.config.glossarySamplingRatio || 10) / 100;
@@ -239,22 +239,32 @@ ${segmentText}
     
     if (totalSegments === 0) return [];
     
+    // 샘플 크기 계산
     const sampleSize = Math.max(1, Math.floor(totalSegments * samplingRatio));
     
+    // 전체보다 샘플이 크거나 같으면 전체 반환
     if (sampleSize >= totalSegments) {
       return allSegments;
     }
 
-    // 균등 샘플링
-    const step = totalSegments / sampleSize;
-    const selectedIndices: number[] = [];
+    // [변경] 무작위 샘플링 (Fisher-Yates Shuffle)
     
-    for (let i = 0; i < sampleSize; i++) {
-      const index = Math.floor(i * step);
-      if (!selectedIndices.includes(index)) {
-        selectedIndices.push(index);
-      }
+    // 1. 전체 인덱스 배열 생성 [0, 1, 2, ..., n]
+    const indices = Array.from({ length: totalSegments }, (_, i) => i);
+
+    // 2. 인덱스 배열 무작위 섞기
+    for (let i = totalSegments - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [indices[i], indices[j]] = [indices[j], indices[i]]; // Swap
     }
+
+    // 3. 앞에서부터 sampleSize만큼 자르기
+    const selectedIndices = indices.slice(0, sampleSize);
+
+    // 4. 처리 순서를 원문 흐름대로 하기 위해 인덱스 오름차순 정렬
+    selectedIndices.sort((a, b) => a - b);
+
+    this.log('debug', `무작위 샘플링 완료: ${selectedIndices.length}개 세그먼트 선택됨 (인덱스: ${selectedIndices.slice(0, 5).join(', ')}...)`);
 
     return selectedIndices.map(i => allSegments[i]);
   }
