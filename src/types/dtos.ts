@@ -36,6 +36,7 @@ export interface TranslationJobProgress {
   currentStatusMessage: string;
   currentChunkProcessing?: number;
   lastErrorMessage?: string;
+  etaSeconds?: number; // 남은 예상 시간 (초)
 }
 
 /**
@@ -59,6 +60,7 @@ export interface GlossaryExtractionProgress {
   processedSegments: number;
   currentStatusMessage: string;
   extractedEntriesCount: number;
+  etaSeconds?: number; // 남은 예상 시간 (초)
 }
 
 /**

@@ -478,6 +478,7 @@ export class TranslationService {
 
     const results: TranslationResult[] = [];
     const maxWorkers = this.config.maxWorkers || 1;
+    const startTime = Date.now(); // [추가] 시작 시간 기록
 
     const progress: TranslationJobProgress = {
       totalChunks: chunks.length,
@@ -485,6 +486,7 @@ export class TranslationService {
       successfulChunks: 0,
       failedChunks: 0,
       currentStatusMessage: '번역 시작...',
+      etaSeconds: 0,
     };
 
     // 초기 상태 보고
@@ -514,6 +516,16 @@ export class TranslationService {
           // 진행률 업데이트
           progress.processedChunks++;
           progress.successfulChunks++;
+          
+          // 기존 항목 스킵 시 ETA 계산 (빠르게 넘어가므로 0으로 수렴할 수 있지만 계산은 수행)
+          const now = Date.now();
+          const elapsedSeconds = (now - startTime) / 1000;
+          if (progress.processedChunks > 0) {
+            const avgTimePerChunk = elapsedSeconds / progress.processedChunks;
+            const remainingChunks = progress.totalChunks - progress.processedChunks;
+            progress.etaSeconds = Math.ceil(avgTimePerChunk * remainingChunks);
+          }
+          
           onProgress?.(progress);
 
           this.log('debug', `청크 ${i + 1} 스킵 (이미 완료됨)`);
@@ -539,7 +551,7 @@ export class TranslationService {
           results.push(result);
           onResult?.(result);
 
-          // 결과 반영 (Atomic 하지 않으나 JS 싱글스레드 특성상 경쟁조건 없음)
+          // 결과 반영
           progress.processedChunks++;
           if (result.success) {
             progress.successfulChunks++;
@@ -548,6 +560,15 @@ export class TranslationService {
             progress.lastErrorMessage = result.error;
           }
           
+          // [추가] ETA 계산
+          const now = Date.now();
+          const elapsedSeconds = (now - startTime) / 1000;
+          if (progress.processedChunks > 0) {
+            const avgTimePerChunk = elapsedSeconds / progress.processedChunks;
+            const remainingChunks = progress.totalChunks - progress.processedChunks;
+            progress.etaSeconds = Math.ceil(avgTimePerChunk * remainingChunks);
+          }
+
           onProgress?.(progress);
         } catch (err) {
             // translateChunk 내부에서 대부분 처리되지만 안전망
@@ -571,6 +592,7 @@ export class TranslationService {
     // 완료
     progress.currentStatusMessage = this.stopRequested ? '번역 중단됨' : '번역 완료';
     progress.currentChunkProcessing = undefined;
+    progress.etaSeconds = 0; // 완료 시 ETA 0
     onProgress?.(progress);
 
     this.log('info', `번역 완료: 성공 ${progress.successfulChunks}, 실패 ${progress.failedChunks}`);
@@ -617,6 +639,7 @@ export class TranslationService {
       successfulChunks: 0,
       failedChunks: 0,
       currentStatusMessage: '실패 청크 재번역 시작...',
+      etaSeconds: 0,
     };
 
     onProgress?.(progress);
@@ -624,6 +647,7 @@ export class TranslationService {
     const updatedResults = [...results];
     const maxWorkers = this.config.maxWorkers || 1;
     const processingPromises = new Set<Promise<void>>();
+    const startTime = Date.now(); // [추가] 시작 시간
 
     for (const failedResult of failedResults) {
       if (this.stopRequested) break;
@@ -659,6 +683,15 @@ export class TranslationService {
           progress.lastErrorMessage = newResult.error;
         }
 
+        // [추가] ETA 계산
+        const now = Date.now();
+        const elapsedSeconds = (now - startTime) / 1000;
+        if (progress.processedChunks > 0) {
+          const avgTimePerChunk = elapsedSeconds / progress.processedChunks;
+          const remainingChunks = progress.totalChunks - progress.processedChunks;
+          progress.etaSeconds = Math.ceil(avgTimePerChunk * remainingChunks);
+        }
+
         onProgress?.(progress);
       })();
 
@@ -674,6 +707,7 @@ export class TranslationService {
 
     progress.currentStatusMessage = '재번역 완료';
     progress.currentChunkProcessing = undefined;
+    progress.etaSeconds = 0;
     onProgress?.(progress);
 
     return updatedResults.sort((a, b) => a.chunkIndex - b.chunkIndex);

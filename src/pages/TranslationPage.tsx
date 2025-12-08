@@ -395,6 +395,16 @@ function PromptSettings() {
 }
 
 /**
+ * 시간 포맷팅 유틸리티
+ */
+const formatTime = (seconds?: number) => {
+  if (seconds === undefined || seconds < 0) return '--:--';
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}분 ${secs.toString().padStart(2, '0')}초`;
+};
+
+/**
  * 진행률 표시 컴포넌트
  */
 function ProgressSection() {
@@ -408,9 +418,22 @@ function ProgressSection() {
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
+       <div className="flex justify-between items-end mb-2">
+        <span className="text-sm font-medium text-gray-700">
+           {progress?.currentStatusMessage || '준비 중...'}
+        </span>
+        
+        {/* ETA 표시 */}
+        {isRunning && progress?.etaSeconds !== undefined && (
+          <span className="text-sm font-mono text-blue-600 bg-blue-50 px-2 py-1 rounded">
+            남은 시간: {formatTime(progress.etaSeconds)}
+          </span>
+        )}
+      </div>
+
       <ProgressBar
         value={percentage}
-        label={progress?.currentStatusMessage || '준비 중...'}
+        // label은 위에서 커스텀하게 표시함
         showPercentage
         detail={progress ? `${progress.processedChunks}/${progress.totalChunks}` : undefined}
         color="primary"

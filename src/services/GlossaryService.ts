@@ -419,12 +419,15 @@ export class GlossaryService {
 
     this.log('info', `총 ${allSegments.length}개 세그먼트 중 ${totalSegments}개의 표본으로 용어집 추출 시작...`);
 
+    const startTime = Date.now(); // [추가] 시작 시간 기록
+
     // 초기 진행률 콜백
     progressCallback?.({
       totalSegments,
       processedSegments: 0,
       currentStatusMessage: '추출 시작 중...',
       extractedEntriesCount: allExtractedEntries.length,
+      etaSeconds: 0,
     });
 
     // 병렬 처리를 위한 설정
@@ -459,12 +462,24 @@ export class GlossaryService {
           this.log('error', `세그먼트 ${i + 1} 처리 중 오류: ${error}`);
         } finally {
           processedCount++;
+          
+          // [추가] ETA 계산
+          const now = Date.now();
+          const elapsedSeconds = (now - startTime) / 1000;
+          let eta = 0;
+          if (processedCount > 0) {
+             const avgTimePerSegment = elapsedSeconds / processedCount;
+             const remainingSegments = totalSegments - processedCount;
+             eta = Math.ceil(avgTimePerSegment * remainingSegments);
+          }
+
           // 진행률 콜백
           progressCallback?.({
             totalSegments,
             processedSegments: processedCount,
             currentStatusMessage: `세그먼트 ${processedCount}/${totalSegments} 처리 완료`,
             extractedEntriesCount: allExtractedEntries.length,
+            etaSeconds: eta,
           });
         }
       })();
@@ -488,6 +503,7 @@ export class GlossaryService {
       processedSegments: totalSegments,
       currentStatusMessage: '충돌 해결 및 정리 중...',
       extractedEntriesCount: allExtractedEntries.length,
+      etaSeconds: 0,
     });
 
     let finalEntries = this.resolveConflicts(allExtractedEntries);
@@ -505,6 +521,7 @@ export class GlossaryService {
       processedSegments: totalSegments,
       currentStatusMessage: `추출 완료: ${finalEntries.length}개 항목`,
       extractedEntriesCount: finalEntries.length,
+      etaSeconds: 0,
     });
 
     this.log('info', `용어집 추출 완료. 최종 ${finalEntries.length}개 항목.`);
@@ -552,7 +569,7 @@ export class GlossaryService {
   }
 }
 
-// 싱글톤 인스턴스
+// 싱글톤 인스턴스 관리
 let defaultGlossaryService: GlossaryService | null = null;
 
 /**
@@ -561,19 +578,22 @@ let defaultGlossaryService: GlossaryService | null = null;
 export function getGlossaryService(config: AppConfig, apiKey?: string): GlossaryService {
   if (!defaultGlossaryService) {
     defaultGlossaryService = new GlossaryService(config, apiKey);
+  } else {
+    // 설정이 변경되었을 수 있으므로 업데이트 시도
+    defaultGlossaryService.updateConfig(config);
   }
   return defaultGlossaryService;
 }
 
 /**
- * 기본 서비스 리셋
+ * 기본 서비스 재설정
  */
 export function resetGlossaryService(): void {
   defaultGlossaryService = null;
 }
 
 /**
- * 새 인스턴스 생성
+ * 새로운 서비스 인스턴스 생성
  */
 export function createGlossaryService(config: AppConfig, apiKey?: string): GlossaryService {
   return new GlossaryService(config, apiKey);

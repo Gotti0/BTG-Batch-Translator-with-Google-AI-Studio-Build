@@ -1,3 +1,4 @@
+
 // pages/GlossaryPage.tsx
 // 용어집 관리 페이지
 
@@ -296,6 +297,16 @@ function AddEntryForm() {
 }
 
 /**
+ * 시간 포맷팅 유틸리티
+ */
+const formatTime = (seconds?: number) => {
+  if (seconds === undefined || seconds < 0) return '--:--';
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}분 ${secs.toString().padStart(2, '0')}초`;
+};
+
+/**
  * 용어집 자동 추출 섹션 컴포넌트
  */
 function GlossaryExtractionSection() {
@@ -439,9 +450,18 @@ function GlossaryExtractionSection() {
           {/* 진행률 표시 */}
           {isExtracting && extractionProgress && (
             <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span>{extractionProgress.currentStatusMessage}</span>
+                {/* [추가] ETA 표시 */}
+                {extractionProgress.etaSeconds !== undefined && (
+                    <span className="font-mono text-purple-600">
+                        예상 소요: {formatTime(extractionProgress.etaSeconds)}
+                    </span>
+                )}
+              </div>
               <ProgressBar
                 value={percentage}
-                label={extractionProgress.currentStatusMessage || '추출 중...'}
+                // label은 위에서 커스텀 표시
                 showPercentage
                 detail={`${extractionProgress.processedSegments}/${extractionProgress.totalSegments} 세그먼트`}
                 color="primary"
