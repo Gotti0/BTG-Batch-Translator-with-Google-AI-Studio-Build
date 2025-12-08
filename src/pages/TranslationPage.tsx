@@ -1,4 +1,3 @@
-
 // pages/TranslationPage.tsx
 // 설정 및 번역 페이지
 
@@ -616,7 +615,7 @@ export function TranslationPage() {
             <Button
               variant="primary"
               size="lg"
-              fullWidth
+              className="flex-1"
               disabled={!canStart}
               leftIcon={<Play className="w-5 h-5" />}
               onClick={handleStartTranslation}
@@ -639,7 +638,7 @@ export function TranslationPage() {
           <Button
             variant="danger"
             size="lg"
-            fullWidth
+            className="flex-1"
             leftIcon={<Square className="w-5 h-5" />}
             onClick={handleStopTranslation}
           >
@@ -652,6 +651,7 @@ export function TranslationPage() {
           size="lg"
           leftIcon={<Save className="w-5 h-5" />}
           onClick={handleExportSettings}
+          className="whitespace-nowrap shrink-0"
         >
           설정 저장
         </Button>

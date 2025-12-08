@@ -1,8 +1,9 @@
-
 // services/GlossaryService.ts
 // Python domain/glossary_service.py 의 TypeScript 변환
 // 텍스트에서 용어집 항목을 AI로 추출하고 관리하는 서비스
 
+import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 import { GeminiClient, GeminiApiException } from './GeminiClient';
 import { ChunkService } from './ChunkService';
 import type { GlossaryEntry, GlossaryExtractionProgress, LogEntry } from '../types/dtos';
@@ -24,41 +25,21 @@ export type GlossaryProgressCallback = (progress: GlossaryExtractionProgress) =>
 export type StopCheckCallback = () => boolean;
 
 /**
- * API에서 반환되는 원시 용어집 항목
+ * Zod를 사용한 용어집 스키마 정의
+ * 문서에 나온대로 describe를 상세히 적어주면 AI 인식률이 높아집니다.
  */
-interface ApiGlossaryTerm {
-  keyword: string;
-  translated_keyword: string;
-  target_language: string;
-  occurrence_count: number;
-}
+const glossaryItemSchema = z.object({
+  keyword: z.string().describe("The original term exactly as it appears in the text."),
+  translated_keyword: z.string().describe("The translated term in the target language (Korean). Follow the Sino-Korean reading rules unless it is a foreign transliteration."),
+  target_language: z.string().describe("BCP-47 language code (e.g., 'ko')."),
+  occurrence_count: z.number().int().describe("Estimated number of times this term appears in the segment."),
+  type: z.enum(["person", "proper_noun", "place", "organization"]).optional().describe("The category of the extracted term.")
+});
 
-/**
- * 용어집 추출 기본 프롬프트 템플릿
- */
-const DEFAULT_GLOSSARY_EXTRACTION_PROMPT = `Analyze the following text. Identify key terms, focusing specifically on:
-- **People (characters)**: Names of characters, protagonists, antagonists
-- **Proper nouns**: Unique items, titles, artifacts, special terms
-- **Place names**: Locations, cities, countries, specific buildings
-- **Organization names**: Companies, groups, factions, schools
-
-For each identified term, provide:
-1. The original keyword as it appears in the text
-2. Its translation into {target_lang_name} (BCP-47: {target_lang_code})
-3. Estimated occurrence count in this segment
-
-Respond with a JSON array of objects with these exact fields:
-- "keyword": string (original term)
-- "translated_keyword": string (translated term)
-- "target_language": string (BCP-47 code, e.g., "ko")
-- "occurrence_count": number
-
-Text to analyze:
-\`\`\`
-{novelText}
-\`\`\`
-
-Respond ONLY with the JSON array, no additional text.`;
+// 배열 형태의 응답을 받기 위한 래퍼 스키마
+const glossaryResponseSchema = z.object({
+  terms: z.array(glossaryItemSchema).describe("List of extracted glossary terms.")
+});
 
 /**
  * 용어집 서비스 클래스
@@ -121,23 +102,40 @@ export class GlossaryService {
   }
 
   /**
-   * 용어집 추출 프롬프트 생성
+   * 용어집 추출 프롬프트 생성 (Structured Output 용)
+   * JSON 형식을 요청하는 문구를 제거하고, 언어적 규칙에 집중합니다.
    */
   private getExtractionPrompt(
     segmentText: string,
     userOverridePrompt?: string
   ): string {
-    const template = userOverridePrompt?.trim() || 
-      this.config.glossaryExtractionPrompt || 
-      DEFAULT_GLOSSARY_EXTRACTION_PROMPT;
+    // 사용자가 프롬프트를 오버라이드 했으면 그것을 우선 사용하되, 
+    // 스키마가 강제되므로 출력 형식을 설명하는 부분은 제거해도 됩니다.
+    if (userOverridePrompt?.trim()) {
+      return `${userOverridePrompt}\n\nText to analyze:\n${segmentText}`;
+    }
 
     const targetLangCode = this.config.novelLanguage || 'ko';
     const targetLangName = this.getLanguageName(targetLangCode);
 
-    return template
-      .replace(/{target_lang_code}/g, targetLangCode)
-      .replace(/{target_lang_name}/g, targetLangName)
-      .replace(/{novelText}/g, segmentText);
+    return `
+Analyze the following text to extract specific proper nouns for a glossary.
+
+**Target Scope:**
+- **People (Characters)**: Names of protagonists, antagonists, side characters.
+- **Proper Nouns**: Unique items, artifacts, skill names, martial arts titles.
+- **Place Names**: Cities, sects, mountains, specific buildings.
+- **Organizations**: Sects, guilds, schools, companies.
+
+**Translation Rules for ${targetLangName} (${targetLangCode}):**
+1. **Sino-Korean Reading (Rule 1)**: For traditional Chinese names/nouns, use the Korean Hanja reading (e.g., 北京 -> 북경).
+2. **Foreign Transliteration (Rule 2 - Exception)**: If the term is a transliteration of a non-Chinese name (e.g., English, Japanese), represent the sound (e.g., 宝马 -> BMW, not 보마).
+
+Text to analyze:
+\`\`\`
+${segmentText}
+\`\`\`
+`.trim();
   }
 
   /**
@@ -165,76 +163,7 @@ export class GlossaryService {
   }
 
   /**
-   * API 응답 파싱
-   */
-  private parseApiResponse(responseText: string): ApiGlossaryTerm[] {
-    try {
-      // JSON 배열 추출 시도
-      let jsonStr = responseText.trim();
-      
-      // 코드 블록 제거
-      if (jsonStr.startsWith('```json')) {
-        jsonStr = jsonStr.slice(7);
-      } else if (jsonStr.startsWith('```')) {
-        jsonStr = jsonStr.slice(3);
-      }
-      if (jsonStr.endsWith('```')) {
-        jsonStr = jsonStr.slice(0, -3);
-      }
-      jsonStr = jsonStr.trim();
-
-      // JSON 배열 찾기
-      const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
-      if (!arrayMatch) {
-        this.log('warning', 'API 응답에서 JSON 배열을 찾을 수 없습니다.');
-        return [];
-      }
-
-      const parsed = JSON.parse(arrayMatch[0]);
-      
-      if (!Array.isArray(parsed)) {
-        this.log('warning', 'API 응답이 배열이 아닙니다.');
-        return [];
-      }
-
-      // 유효한 항목만 필터링
-      return parsed.filter((item: any) => 
-        typeof item === 'object' &&
-        item !== null &&
-        typeof item.keyword === 'string' &&
-        typeof item.translated_keyword === 'string' &&
-        item.keyword.trim() !== ''
-      ).map((item: any) => ({
-        keyword: item.keyword.trim(),
-        translated_keyword: item.translated_keyword.trim(),
-        target_language: item.target_language || this.config.novelLanguage || 'ko',
-        occurrence_count: typeof item.occurrence_count === 'number' 
-          ? item.occurrence_count 
-          : 1,
-      }));
-    } catch (error) {
-      this.log('error', `API 응답 파싱 실패: ${error}`);
-      return [];
-    }
-  }
-
-  /**
-   * API 용어를 GlossaryEntry DTO로 변환
-   */
-  private apiTermsToEntries(apiTerms: ApiGlossaryTerm[]): GlossaryEntry[] {
-    return apiTerms.map((term, index) => ({
-      id: `extracted-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
-      keyword: term.keyword,
-      translatedKeyword: term.translated_keyword,
-      targetLanguage: term.target_language,
-      occurrenceCount: term.occurrence_count,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }));
-  }
-
-  /**
-   * 단일 세그먼트에서 용어집 추출
+   * 단일 세그먼트에서 용어집 추출 (Structured Output 적용)
    */
   private async extractFromSegment(
     segmentText: string,
@@ -247,30 +176,52 @@ export class GlossaryService {
     const prompt = this.getExtractionPrompt(segmentText, userOverridePrompt);
 
     try {
+      // [핵심 변경] responseJsonSchema를 사용하여 구조화된 출력 요청
       const responseText = await this.geminiClient.generateText(
         prompt,
         this.config.modelName,
         undefined,
         {
-          temperature: this.config.glossaryExtractionTemperature || 0.3,
-          maxOutputTokens: 4096,
+          temperature: this.config.glossaryExtractionTemperature || 0.1, // 구조화된 출력은 낮은 온도가 유리함
+          maxOutputTokens: 8192,
+          responseMimeType: "application/json", // 필수 설정
+          // [Fix] Cast schema to any to resolve type mismatch with zod-to-json-schema
+          responseJsonSchema: zodToJsonSchema(glossaryResponseSchema as any), // Zod 스키마 변환 전달
         }
       );
 
-      const apiTerms = this.parseApiResponse(responseText);
-      const entries = this.apiTermsToEntries(apiTerms);
+      // 응답은 이미 JSON 문자열임이 보장됨
+      const parsedJson = JSON.parse(responseText);
       
-      this.log('debug', `세그먼트에서 ${entries.length}개 용어 추출됨`);
+      // Zod 스키마로 유효성 검증 및 타입 추론
+      const validatedData = glossaryResponseSchema.parse(parsedJson);
+
+      // DTO로 변환
+      const entries = validatedData.terms.map((item, index) => ({
+        id: `extracted-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+        keyword: item.keyword,
+        translatedKeyword: item.translated_keyword,
+        targetLanguage: item.target_language,
+        occurrenceCount: item.occurrence_count,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }));
+      
+      this.log('debug', `세그먼트에서 ${entries.length}개 용어 추출됨 (Structured Output)`);
       return entries;
+
     } catch (error) {
-      // [추가] 429 Rate Limit 에러 감지 시 용어집 추출 중단
       if (GeminiClient.isRateLimitError(error as Error)) {
         this.log('error', `API 할당량 초과(429) 감지. 용어집 추출을 중단합니다.`);
-        this.requestStop(); // 추출 작업 중단 요청
+        this.requestStop();
         return [];
       }
 
-      if (error instanceof GeminiApiException) {
+      // Zod 파싱 에러 처리
+      if (error instanceof z.ZodError) {
+        // [Fix] Use error.issues instead of error.errors
+        this.log('error', `스키마 검증 실패: ${JSON.stringify(error.issues)}`);
+      } else if (error instanceof GeminiApiException) {
         this.log('error', `용어집 추출 API 오류: ${error.message}`);
       } else {
         this.log('error', `용어집 추출 중 오류: ${error}`);
@@ -532,7 +483,7 @@ export class GlossaryService {
    * 용어집을 JSON 문자열로 내보내기 (Snake Case 변환 적용)
    */
   exportToJson(entries: GlossaryEntry[]): string {
-    // [수정] 등장 횟수 정렬
+    // 등장 횟수 정렬
     const sortedEntries = [...entries].sort((a, b) => {
       if (b.occurrenceCount !== a.occurrenceCount) {
         return b.occurrenceCount - a.occurrenceCount;
@@ -553,7 +504,7 @@ export class GlossaryService {
    * 용어집을 CSV 문자열로 내보내기
    */
   exportToCsv(entries: GlossaryEntry[]): string {
-    // [수정] 등장 횟수 정렬
+    // 등장 횟수 정렬
     const sortedEntries = [...entries].sort((a, b) => {
       if (b.occurrenceCount !== a.occurrenceCount) {
         return b.occurrenceCount - a.occurrenceCount;

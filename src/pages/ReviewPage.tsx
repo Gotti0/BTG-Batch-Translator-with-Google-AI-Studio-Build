@@ -5,28 +5,46 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { 
   CheckCircle, AlertTriangle, RefreshCw, Copy, Eye, EyeOff, 
-  TrendingUp, AlertCircle, ChevronLeft, ChevronRight,
-  Trash2, Edit2, Save, X 
+  TrendingUp, AlertCircle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  Trash2, Edit2, Save, X, Zap 
 } from 'lucide-react';
 import { useTranslationStore } from '../stores/translationStore';
 import { useTranslation } from '../hooks/useTranslation';
 import type { TranslationResult } from '../types/dtos';
 import { Button, IconButton, ButtonGroup, ConfirmDialog } from '../components';
-import { QualityCheckService, type RegressionAnalysis } from '../services/QualityCheckService';
+import { QualityCheckService, type RegressionAnalysis, type SuspiciousChunk } from '../services/QualityCheckService';
 
 /**
- * 청크 상태 배지 컴포넌트
+ * 청크 상태 배지 컴포넌트 (수정됨: 품질 이슈 표시 추가)
  */
-function StatusBadge({ success }: { success: boolean }) {
-  return success ? (
-    <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">
+function StatusBadge({ success, issue }: { success: boolean, issue?: SuspiciousChunk }) {
+  if (!success) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-medium">
+        <AlertTriangle className="w-3 h-3" />
+        실패
+      </span>
+    );
+  }
+
+  if (issue) {
+    const isOmission = issue.issueType === 'omission';
+    return (
+      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border ${
+        isOmission 
+          ? 'bg-orange-50 text-orange-700 border-orange-200' 
+          : 'bg-yellow-50 text-yellow-700 border-yellow-200'
+      }`}>
+        {isOmission ? <AlertCircle className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
+        {isOmission ? '누락 의심' : '환각 의심'}
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">
       <CheckCircle className="w-3 h-3" />
       성공
-    </span>
-  ) : (
-    <span className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs">
-      <AlertTriangle className="w-3 h-3" />
-      실패
     </span>
   );
 }
@@ -36,15 +54,17 @@ function StatusBadge({ success }: { success: boolean }) {
  */
 interface ChunkCardProps {
   result: TranslationResult;
+  qualityIssue?: SuspiciousChunk; // [추가] 품질 이슈 데이터
   isExpanded: boolean;
   onToggle: (index: number) => void;
-  onRetry: (index: number) => void;      // 개별 재번역
-  onDiscard: (index: number) => void;    // 번역 비우기
-  onUpdate: (index: number, text: string) => void; // 직접 수정
+  onRetry: (index: number) => void;
+  onDiscard: (index: number) => void;
+  onUpdate: (index: number, text: string) => void;
 }
 
 const ChunkCard = React.memo(function ChunkCard({ 
   result, 
+  qualityIssue, // [추가]
   isExpanded, 
   onToggle, 
   onRetry, 
@@ -55,7 +75,7 @@ const ChunkCard = React.memo(function ChunkCard({
   const [isEditing, setIsEditing] = useState(false);
   const [editedText, setEditedText] = useState(result.translatedText);
 
-  // 복사 핸들러
+  // ... (기존 핸들러 코드는 동일하게 유지)
   const handleCopy = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     await navigator.clipboard.writeText(result.translatedText);
@@ -63,7 +83,6 @@ const ChunkCard = React.memo(function ChunkCard({
     setTimeout(() => setCopyFeedback(false), 2000);
   }, [result.translatedText]);
 
-  // 편집 모드 진입
   const handleEditClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     setEditedText(result.translatedText);
@@ -71,29 +90,22 @@ const ChunkCard = React.memo(function ChunkCard({
     if (!isExpanded) onToggle(result.chunkIndex);
   }, [isExpanded, onToggle, result.chunkIndex, result.translatedText]);
 
-  // 편집 취소
   const handleCancelEdit = useCallback(() => {
     setIsEditing(false);
     setEditedText(result.translatedText);
   }, [result.translatedText]);
 
-  // 저장
   const handleSave = useCallback(() => {
     onUpdate(result.chunkIndex, editedText);
     setIsEditing(false);
   }, [onUpdate, result.chunkIndex, editedText]);
 
-  // 비우기 (실패 처리)
   const handleDiscardClick = useCallback((e: React.MouseEvent) => {
-    console.log('[ChunkCard] Discard button clicked for chunk', result.chunkIndex);
     e.preventDefault();
     e.stopPropagation();
-    
-    // 네이티브 confirm 대신 상위 컴포넌트의 다이얼로그 호출
     onDiscard(result.chunkIndex);
   }, [onDiscard, result.chunkIndex]);
 
-  // 재번역 요청
   const handleRetryClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     onRetry(result.chunkIndex);
@@ -107,36 +119,54 @@ const ChunkCard = React.memo(function ChunkCard({
   const ratio = result.originalText.length > 0 
     ? (result.translatedText.length / result.originalText.length * 100).toFixed(1)
     : 0;
+  
+  // [추가] 이슈에 따른 스타일링
+  let cardBorderClass = 'border-gray-200';
+  let headerBgClass = 'bg-gray-50 hover:bg-gray-100';
+
+  if (!result.success) {
+    cardBorderClass = 'border-red-300';
+    headerBgClass = 'bg-red-50 hover:bg-red-100';
+  } else if (qualityIssue) {
+    // 이슈가 있는 경우
+    if (qualityIssue.issueType === 'omission') {
+      cardBorderClass = 'border-orange-300';
+      headerBgClass = 'bg-orange-50 hover:bg-orange-100';
+    } else {
+      cardBorderClass = 'border-yellow-300';
+      headerBgClass = 'bg-yellow-50 hover:bg-yellow-100';
+    }
+  }
 
   return (
-    <div className={`border rounded-lg overflow-hidden ${result.success ? 'border-gray-200' : 'border-red-300'}`}>
+    <div className={`border rounded-lg overflow-hidden transition-colors ${cardBorderClass}`}>
       {/* 헤더 */}
       <div 
-        className={`flex items-center justify-between px-4 py-3 cursor-pointer ${
-          result.success ? 'bg-gray-50 hover:bg-gray-100' : 'bg-red-50 hover:bg-red-100'
-        }`}
+        className={`flex items-center justify-between px-4 py-3 cursor-pointer transition-colors ${headerBgClass}`}
         onClick={handleToggleClick}
       >
         <div className="flex items-center gap-3">
           <span className="font-medium text-gray-700">청크 #{result.chunkIndex + 1}</span>
-          <StatusBadge success={result.success} />
-          <span className="text-sm text-gray-500">
+          {/* [수정] 배지에 issue 전달 */}
+          <StatusBadge success={result.success} issue={qualityIssue} />
+          
+          <span className="text-sm text-gray-500 hidden sm:inline">
             원문 {result.originalText.length}자 → 번역 {result.translatedText.length}자 ({ratio}%)
           </span>
         </div>
+        
+        {/* 우측 아이콘 버튼들 (기존과 동일) */}
         <div className="flex items-center gap-1">
-          {/* [1] 비우기 버튼 (성공 상태일 때만) */}
           {result.success && !isEditing && (
             <IconButton 
               type="button"
               onClick={handleDiscardClick} 
               icon={<Trash2 className="w-4 h-4 pointer-events-none" />} 
               className="text-red-400 hover:text-red-600 hover:bg-red-50 relative z-10"
-              title="번역 비우기 (재번역 대기)"
+              title="번역 비우기"
               aria-label="번역 비우기"
             />
           )}
-          {/* [2] 재번역 버튼 (실패 상태일 때) */}
           {!result.success && (
             <IconButton 
               onClick={handleRetryClick} 
@@ -146,7 +176,6 @@ const ChunkCard = React.memo(function ChunkCard({
               aria-label="즉시 재번역"
             />
           )}
-          {/* [3] 수정 버튼 */}
           {!isEditing && (
             <IconButton 
               onClick={handleEditClick} 
@@ -157,7 +186,6 @@ const ChunkCard = React.memo(function ChunkCard({
             />
           )}
           <div className="w-px h-4 bg-gray-300 mx-1"></div>
-          {/* [4] 복사 버튼 */}
           <IconButton
             onClick={handleCopy}
             title="복사"
@@ -165,61 +193,85 @@ const ChunkCard = React.memo(function ChunkCard({
             icon={copyFeedback ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
             aria-label="복사"
           />
-          {/* [5] 접기/펼치기 아이콘 */}
           {isExpanded ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
         </div>
       </div>
 
       {/* 상세 내용 */}
       {isExpanded && (
-        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* 원문 */}
-          <div>
-            <h4 className="text-sm font-medium text-gray-600 mb-2">원문</h4>
-            <div className="bg-gray-100 rounded-lg p-3 max-h-96 overflow-y-auto">
-              <pre className="whitespace-pre-wrap text-sm text-gray-700 font-mono">{result.originalText}</pre>
+        <div className="p-4 space-y-4">
+          {/* [추가] 품질 이슈 알림 박스 (확장 시 상단에 표시) */}
+          {qualityIssue && (
+             <div className={`p-3 rounded-lg text-sm flex items-start gap-2 ${
+               qualityIssue.issueType === 'omission' 
+                 ? 'bg-orange-100 text-orange-800 border border-orange-200' 
+                 : 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+             }`}>
+               <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+               <div>
+                 <p className="font-semibold">
+                   {qualityIssue.issueType === 'omission' 
+                     ? '번역 내용 누락 가능성이 있습니다.' 
+                     : '번역 내용 환각(Hallucination) 가능성이 있습니다.'}
+                 </p>
+                 <p className="mt-1 opacity-90">
+                   회귀 분석 결과 예상되는 길이는 <strong>{qualityIssue.expectedLength}자</strong>이나, 
+                   실제 번역은 <strong>{qualityIssue.translatedLength}자</strong>입니다. 
+                   (Z-Score: {qualityIssue.zScore})
+                 </p>
+               </div>
+             </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* 원문 */}
+            <div>
+              <h4 className="text-sm font-medium text-gray-600 mb-2">원문</h4>
+              <div className="bg-gray-100 rounded-lg p-3 max-h-96 overflow-y-auto">
+                <pre className="whitespace-pre-wrap text-sm text-gray-700 font-mono">{result.originalText}</pre>
+              </div>
             </div>
-          </div>
-          
-          {/* 번역문 */}
-          <div>
-            <h4 className="text-sm font-medium text-gray-600 mb-2">번역</h4>
-            {isEditing ? (
-              <div className="flex flex-col h-full">
-                <textarea 
-                  className="w-full flex-1 border rounded-lg p-3 text-sm font-mono focus:ring-2 focus:ring-primary-500 focus:border-primary-500 min-h-[12rem]"
-                  value={editedText} 
-                  onChange={(e) => setEditedText(e.target.value)}
-                  placeholder="번역 내용을 수정하세요..."
-                />
-                <div className="flex justify-end gap-2 mt-2">
-                  <Button size="sm" variant="ghost" onClick={handleCancelEdit}>취소</Button>
-                  <Button size="sm" variant="primary" onClick={handleSave} leftIcon={<Save className="w-4 h-4"/>}>저장</Button>
-                </div>
-              </div>
-            ) : (
-              <div className={`rounded-lg p-3 max-h-96 overflow-y-auto ${result.success ? 'bg-green-50' : 'bg-red-50'}`}>
-                {result.success ? (
-                  <pre className="whitespace-pre-wrap text-sm text-gray-700 font-mono">{result.translatedText}</pre>
-                ) : (
-                  <div className="text-red-600">
-                    <p className="font-medium flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4" />
-                      번역 실패
-                    </p>
-                    <p className="text-sm mt-1">{result.error || '알 수 없는 오류'}</p>
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      className="mt-3 bg-white text-red-600 border-red-200 hover:bg-red-50"
-                      onClick={handleRetryClick}
-                    >
-                      <RefreshCw className="w-3 h-3 mr-1" /> 재번역 시도
-                    </Button>
+            
+            {/* 번역문 */}
+            <div>
+              <h4 className="text-sm font-medium text-gray-600 mb-2">번역</h4>
+              {isEditing ? (
+                <div className="flex flex-col h-full">
+                  <textarea 
+                    className="w-full flex-1 border rounded-lg p-3 text-sm font-mono focus:ring-2 focus:ring-primary-500 focus:border-primary-500 min-h-[12rem]"
+                    value={editedText} 
+                    onChange={(e) => setEditedText(e.target.value)}
+                    placeholder="번역 내용을 수정하세요..."
+                  />
+                  <div className="flex justify-end gap-2 mt-2">
+                    <Button size="sm" variant="ghost" onClick={handleCancelEdit}>취소</Button>
+                    <Button size="sm" variant="primary" onClick={handleSave} leftIcon={<Save className="w-4 h-4"/>}>저장</Button>
                   </div>
-                )}
-              </div>
-            )}
+                </div>
+              ) : (
+                <div className={`rounded-lg p-3 max-h-96 overflow-y-auto ${result.success ? 'bg-green-50' : 'bg-red-50'}`}>
+                  {result.success ? (
+                    <pre className="whitespace-pre-wrap text-sm text-gray-700 font-mono">{result.translatedText}</pre>
+                  ) : (
+                    <div className="text-red-600">
+                      <p className="font-medium flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4" />
+                        번역 실패
+                      </p>
+                      <p className="text-sm mt-1">{result.error || '알 수 없는 오류'}</p>
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        className="mt-3 bg-white text-red-600 border-red-200 hover:bg-red-50"
+                        onClick={handleRetryClick}
+                      >
+                        <RefreshCw className="w-3 h-3 mr-1" /> 재번역 시도
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -228,17 +280,20 @@ const ChunkCard = React.memo(function ChunkCard({
 });
 
 /**
- * 검토 통계 컴포넌트
+ * 검토 통계 컴포넌트 (수정됨: 하단 목록 제거 및 props로 분석 결과 수신)
  */
-const ReviewStats = React.memo(function ReviewStats({ results }: { results: TranslationResult[] }) {
+const ReviewStats = React.memo(function ReviewStats({ 
+  results, 
+  analysis 
+}: { 
+  results: TranslationResult[],
+  analysis: RegressionAnalysis 
+}) {
   const stats = useMemo(() => {
     const successful = results.filter(r => r.success);
     const failed = results.filter(r => !r.success);
     const totalOriginal = results.reduce((sum, r) => sum + r.originalText.length, 0);
     const totalTranslated = successful.reduce((sum, r) => sum + r.translatedText.length, 0);
-    
-    // 선형 회귀 분석
-    const analysis = QualityCheckService.analyzeTranslationQuality(results);
     
     return {
       total: results.length,
@@ -247,7 +302,6 @@ const ReviewStats = React.memo(function ReviewStats({ results }: { results: Tran
       totalOriginal,
       totalTranslated,
       averageRatio: totalOriginal > 0 ? (totalTranslated / totalOriginal * 100).toFixed(1) : 0,
-      regression: analysis,
     };
   }, [results]);
 
@@ -275,102 +329,57 @@ const ReviewStats = React.memo(function ReviewStats({ results }: { results: Tran
         </div>
       </div>
 
-      {/* 선형 회귀 분석 통계 */}
+      {/* 선형 회귀 분석 통계 (목록 제거됨) */}
       <div className="bg-gradient-to-br from-indigo-50 to-blue-50 rounded-lg p-5 border border-indigo-200">
         <div className="flex items-center gap-2 mb-3">
           <TrendingUp className="w-5 h-5 text-indigo-600" />
-          <h3 className="font-semibold text-indigo-900">회귀 분석 (선형 모델)</h3>
+          <h3 className="font-semibold text-indigo-900">회귀 분석 (품질 검사)</h3>
         </div>
         
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           <div>
             <div className="text-gray-600">회귀식</div>
             <div className="font-mono text-indigo-700 font-semibold">
-              y = {stats.regression.slope.toFixed(4)}x + {stats.regression.intercept.toFixed(2)}
+              y = {analysis.slope.toFixed(4)}x + {analysis.intercept.toFixed(2)}
             </div>
           </div>
           <div>
             <div className="text-gray-600">표준편차</div>
             <div className="font-mono text-indigo-700 font-semibold">
-              {stats.regression.stdDev.toFixed(2)}
+              {analysis.stdDev.toFixed(2)}
             </div>
           </div>
           <div>
             <div className="text-gray-600">의심 청크</div>
-            <div className="font-mono text-indigo-700 font-semibold">
-              {stats.regression.suspiciousChunks.length}개
+            <div className={`font-mono font-semibold ${analysis.suspiciousChunks.length > 0 ? 'text-orange-600' : 'text-green-600'}`}>
+              {analysis.suspiciousChunks.length}개
             </div>
           </div>
           <div>
-            <div className="text-gray-600">데이터 포인트</div>
+            <div className="text-gray-600">분석 대상</div>
             <div className="font-mono text-indigo-700 font-semibold">
               {stats.successful}개
             </div>
           </div>
         </div>
 
-        {/* 회귀식 해석 */}
         <div className="mt-3 pt-3 border-t border-indigo-200 text-xs text-indigo-800">
-          <p className="font-medium mb-1">📌 해석:</p>
           <p>
-            원문 문자가 1자 증가하면 번역 문자는 평균 <span className="font-semibold text-indigo-600">{stats.regression.slope.toFixed(4)}</span>자 증가합니다.
-            {stats.regression.suspiciousChunks.length > 0 && (
-              <span className="block mt-1 text-orange-700">
-                ⚠️ <span className="font-semibold">{stats.regression.suspiciousChunks.length}</span>개의 의심 청크를 탐지했습니다.
-              </span>
-            )}
+            ⚠️ 탐지된 의심 청크는 아래 목록에서 <strong>누락 의심</strong> 또는 <strong>환각 의심</strong> 배지로 표시됩니다.
           </p>
         </div>
       </div>
-
-      {/* 의심 청크 목록 */}
-      {stats.regression.suspiciousChunks.length > 0 && (
-        <div className="bg-orange-50 rounded-lg p-5 border border-orange-200">
-          <div className="flex items-center gap-2 mb-3">
-            <AlertCircle className="w-5 h-5 text-orange-600" />
-            <h3 className="font-semibold text-orange-900">의심 구간 (수동 검토 권장)</h3>
-          </div>
-          
-          <div className="space-y-2 max-h-64 overflow-y-auto">
-            {stats.regression.suspiciousChunks.map(chunk => (
-              <div 
-                key={chunk.chunkIndex} 
-                className={`text-sm p-2 rounded ${
-                  chunk.issueType === 'omission' 
-                    ? 'bg-red-100 text-red-800 border border-red-300' 
-                    : 'bg-yellow-100 text-yellow-800 border border-yellow-300'
-                }`}
-              >
-                <span className="font-semibold">청크 #{chunk.chunkIndex + 1}</span>
-                {' '}
-                <span className="text-xs">
-                  {chunk.issueType === 'omission' ? '❌ 누락 의심' : '⚡ 환각 의심'}
-                </span>
-                {' | '}
-                <span className="font-mono text-xs">
-                  원문 {chunk.sourceLength}자 → 번역 {chunk.translatedLength}자 
-                  (예상: {chunk.expectedLength}자)
-                </span>
-                {' | '}
-                <span className="font-mono text-xs">Z-Score: {chunk.zScore}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 });
 
-/**
- * 필터 컴포넌트
- */
+// ... (ReviewFilter 컴포넌트는 기존과 동일)
 function ReviewFilter({ 
   filter, 
   setFilter 
 }: { 
-  filter: 'all' | 'success' | 'failed';
-  setFilter: (f: 'all' | 'success' | 'failed') => void;
+  filter: 'all' | 'success' | 'failed' | 'warning'; // [추가] warning 필터
+  setFilter: (f: 'all' | 'success' | 'failed' | 'warning') => void;
 }) {
   return (
     <div className="mb-4">
@@ -395,6 +404,14 @@ function ReviewFilter({
         >
           실패
         </Button>
+        {/* [추가] 의심 항목 필터 */}
+        <Button
+          onClick={() => setFilter('warning')}
+          variant={filter === 'warning' ? 'primary' : 'secondary'}
+          className={filter === 'warning' ? 'bg-orange-500 hover:bg-orange-600 text-white' : ''}
+        >
+          의심 항목
+        </Button>
       </ButtonGroup>
     </div>
   );
@@ -409,10 +426,24 @@ export function ReviewPage() {
   const { results, updateResult, combineResultsToText } = useTranslationStore();
   const { retryFailedChunks, retrySingleChunk } = useTranslation();
   
-  const [filter, setFilter] = useState<'all' | 'success' | 'failed'>('all');
+  const [filter, setFilter] = useState<'all' | 'success' | 'failed' | 'warning'>('all');
   const [expandedChunks, setExpandedChunks] = useState<Set<number>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [discardTargetIndex, setDiscardTargetIndex] = useState<number | null>(null);
+
+  // [1] 분석 결과를 부모 컴포넌트에서 계산 (Memoization)
+  const analysis = useMemo(() => {
+    return QualityCheckService.analyzeTranslationQuality(results);
+  }, [results]);
+
+  // [2] 의심 청크 Map 생성 (O(1) 조회를 위해)
+  const suspiciousChunkMap = useMemo(() => {
+    const map = new Map<number, SuspiciousChunk>();
+    analysis.suspiciousChunks.forEach(chunk => {
+      map.set(chunk.chunkIndex, chunk);
+    });
+    return map;
+  }, [analysis]);
 
   // 필터링된 결과
   const filteredResults = useMemo(() => {
@@ -422,24 +453,48 @@ export function ReviewPage() {
         return sorted.filter(r => r.success);
       case 'failed':
         return sorted.filter(r => !r.success);
+      case 'warning': // [추가] 의심 항목 필터링
+        return sorted.filter(r => suspiciousChunkMap.has(r.chunkIndex));
       default:
         return sorted;
     }
-  }, [results, filter]);
+  }, [results, filter, suspiciousChunkMap]);
 
-  // 필터 변경 시 페이지 초기화
+  // 페이지 변경 시 스크롤 상단 이동
   useEffect(() => {
     setCurrentPage(1);
   }, [filter]);
 
-  // 페이지네이션
   const totalPages = Math.ceil(filteredResults.length / ITEMS_PER_PAGE);
   const paginatedResults = useMemo(() => {
     const start = (currentPage - 1) * ITEMS_PER_PAGE;
     return filteredResults.slice(start, start + ITEMS_PER_PAGE);
   }, [filteredResults, currentPage]);
 
-  // 콜백 최적화
+  // 페이지 번호 생성 로직 (슬라이딩 윈도우)
+  const getPageNumbers = useCallback(() => {
+    const maxPagesToShow = 10;
+    if (totalPages <= maxPagesToShow) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+
+    // 현재 페이지를 중심으로 윈도우 계산
+    let startPage = currentPage - Math.floor(maxPagesToShow / 2);
+    
+    if (startPage < 1) {
+      startPage = 1;
+    }
+    
+    let endPage = startPage + maxPagesToShow - 1;
+    
+    if (endPage > totalPages) {
+      endPage = totalPages;
+      startPage = Math.max(1, endPage - maxPagesToShow + 1);
+    }
+
+    return Array.from({ length: endPage - startPage + 1 }, (_, i) => startPage + i);
+  }, [currentPage, totalPages]);
+
   const toggleExpand = useCallback((index: number) => {
     setExpandedChunks(prev => {
       const newSet = new Set(prev);
@@ -456,25 +511,19 @@ export function ReviewPage() {
     setExpandedChunks(new Set());
   }, []);
 
-  // [1] 번역 비우기 실행 로직 (다이얼로그 확인 후 호출)
   const executeDiscard = useCallback((chunkIndex: number) => {
-    console.log('[ReviewPage] Executing discard for chunk', chunkIndex);
     updateResult(chunkIndex, {
       success: false,
       translatedText: '',
       error: '사용자 요청에 의한 재번역 대기'
     });
-    // 비운 후에는 성공 항목이 줄어들고 전체 텍스트도 갱신되어야 함 (빈 텍스트로)
     combineResultsToText();
   }, [updateResult, combineResultsToText]);
 
-  // [2] 번역 비우기 요청 핸들러 (다이얼로그 오픈)
   const handleRequestDiscard = useCallback((chunkIndex: number) => {
-    console.log('[ReviewPage] Discard requested for chunk', chunkIndex);
     setDiscardTargetIndex(chunkIndex);
   }, []);
 
-  // [3] 번역 비우기 확인 핸들러
   const handleConfirmDiscard = useCallback(() => {
     if (discardTargetIndex !== null) {
       executeDiscard(discardTargetIndex);
@@ -482,22 +531,19 @@ export function ReviewPage() {
     }
   }, [discardTargetIndex, executeDiscard]);
 
-  // [4] 직접 수정 핸들러
   const handleUpdateText = useCallback((chunkIndex: number, newText: string) => {
     updateResult(chunkIndex, {
       translatedText: newText,
       success: true,
       error: undefined
     });
-    combineResultsToText(); // 전체 텍스트 동기화
+    combineResultsToText();
   }, [updateResult, combineResultsToText]);
 
-  // [5] 개별 재번역 핸들러
   const handleSingleRetry = useCallback((chunkIndex: number) => {
     retrySingleChunk(chunkIndex);
   }, [retrySingleChunk]);
 
-  // [6] 일괄 재시도 핸들러
   const handleBatchRetry = useCallback(() => {
     retryFailedChunks();
   }, [retryFailedChunks]);
@@ -553,18 +599,20 @@ export function ReviewPage() {
           </div>
         ) : (
           <>
-            {/* 통계 */}
-            <ReviewStats results={results} />
+            {/* 통계 (분석 결과 전달) */}
+            <ReviewStats results={results} analysis={analysis} />
 
             {/* 필터 */}
             <ReviewFilter filter={filter} setFilter={setFilter} />
 
-            {/* 청크 목록 (페이지네이션 적용) */}
+            {/* 청크 목록 */}
             <div className="space-y-3">
               {paginatedResults.map(result => (
                 <ChunkCard
                   key={result.chunkIndex}
                   result={result}
+                  // [중요] 해당 청크의 품질 이슈 전달
+                  qualityIssue={suspiciousChunkMap.get(result.chunkIndex)}
                   isExpanded={expandedChunks.has(result.chunkIndex)}
                   onToggle={toggleExpand}
                   onRetry={handleSingleRetry}
@@ -576,27 +624,72 @@ export function ReviewPage() {
 
             {/* 페이지네이션 컨트롤 */}
             {totalPages > 1 && (
-              <div className="flex justify-center items-center gap-4 mt-6">
+              <div className="flex justify-center items-center gap-1 mt-6 select-none">
+                {/* 맨 처음 */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handlePageChange(1)}
+                  disabled={currentPage === 1}
+                  title="첫 페이지"
+                  className="px-2"
+                >
+                  <ChevronsLeft className="w-4 h-4" />
+                </Button>
+
+                {/* 이전 */}
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => handlePageChange(currentPage - 1)}
                   disabled={currentPage === 1}
+                  title="이전 페이지"
+                  className="px-2"
                 >
                   <ChevronLeft className="w-4 h-4" />
-                  이전
                 </Button>
-                <span className="text-sm text-gray-600">
-                  {currentPage} / {totalPages}
-                </span>
+
+                {/* 숫자 페이지네이션 (슬라이딩 윈도우) */}
+                <div className="flex items-center gap-1 mx-2">
+                  {getPageNumbers().map(pageNum => (
+                    <button
+                      key={pageNum}
+                      onClick={() => handlePageChange(pageNum)}
+                      className={`
+                        min-w-[32px] h-8 flex items-center justify-center rounded-md text-sm font-medium transition-colors
+                        ${currentPage === pageNum 
+                          ? 'bg-primary-600 text-white shadow-sm' 
+                          : 'text-gray-700 hover:bg-gray-100'
+                        }
+                      `}
+                    >
+                      {pageNum}
+                    </button>
+                  ))}
+                </div>
+
+                {/* 다음 */}
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => handlePageChange(currentPage + 1)}
                   disabled={currentPage === totalPages}
+                  title="다음 페이지"
+                  className="px-2"
                 >
-                  다음
                   <ChevronRight className="w-4 h-4" />
+                </Button>
+
+                {/* 맨 끝 */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handlePageChange(totalPages)}
+                  disabled={currentPage === totalPages}
+                  title="마지막 페이지"
+                  className="px-2"
+                >
+                  <ChevronsRight className="w-4 h-4" />
                 </Button>
               </div>
             )}

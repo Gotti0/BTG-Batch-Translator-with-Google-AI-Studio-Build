@@ -14,6 +14,9 @@ export interface GenerationConfig {
   maxOutputTokens?: number;
   stopSequences?: string[];
   candidateCount?: number;
+  // [추가] 구조화된 출력을 위한 설정
+  responseMimeType?: string;
+  responseJsonSchema?: object; 
 }
 
 /**
@@ -230,6 +233,9 @@ export class GeminiClient {
           topK: config?.topK ?? 40,
           maxOutputTokens: config?.maxOutputTokens ?? 8192,
           ...(config?.stopSequences && { stopSequences: config.stopSequences }),
+          // [추가] 구조화된 출력 설정 매핑
+          responseMimeType: config?.responseMimeType,
+          responseSchema: config?.responseJsonSchema,
         },
       });
 
