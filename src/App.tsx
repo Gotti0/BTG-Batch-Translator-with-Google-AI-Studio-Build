@@ -21,7 +21,11 @@ const tabs: { id: TabType; label: string; icon: React.ReactNode }[] = [
 // 메인 App 컴포넌트
 export function App() {
   const [activeTab, setActiveTab] = useState<TabType>('translation');
+  
+  // 상태 구독
   const addLog = useTranslationStore(state => state.addLog);
+  const isRunning = useTranslationStore(state => state.isRunning);
+  const hasResults = useTranslationStore(state => state.results.length > 0);
   
   // 앱 초기화
   useEffect(() => {
@@ -29,6 +33,18 @@ export function App() {
     addLog('info', '✅ React 18 + TypeScript 환경 준비 완료');
     addLog('info', '💾 LocalStorage에서 설정을 불러왔습니다.');
   }, []);
+
+  // 탭 닫기 방지 (이탈 방지)
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isRunning || hasResults) { // 번역 중이거나 결과가 있으면
+        e.preventDefault();
+        e.returnValue = ''; // 크롬에서는 이 설정이 필요합니다.
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isRunning, hasResults]);
   
   return (
     <div className="min-h-screen bg-gray-50">
