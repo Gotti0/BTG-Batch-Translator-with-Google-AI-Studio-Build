@@ -366,7 +366,7 @@ export class GlossaryService {
   }
 
   /**
-   * 전체 텍스트에서 용어집 추출
+   * 전체 텍스트에서 용어집 추출 (병렬 처리 지원)
    * 
    * @param textContent - 분석할 텍스트
    * @param progressCallback - 진행률 콜백
@@ -419,7 +419,12 @@ export class GlossaryService {
       extractedEntriesCount: allExtractedEntries.length,
     });
 
-    // 각 세그먼트 처리
+    // 병렬 처리를 위한 설정
+    const maxWorkers = this.config.maxWorkers || 1;
+    const processingPromises = new Set<Promise<void>>();
+    let processedCount = 0;
+
+    // 각 세그먼트 처리 (병렬)
     for (let i = 0; i < sampleSegments.length; i++) {
       // 중지 확인
       if (this.stopRequested || (stopCheck && stopCheck())) {
@@ -427,30 +432,56 @@ export class GlossaryService {
         break;
       }
 
-      const segment = sampleSegments[i];
-      const segmentPreview = segment.slice(0, 50).replace(/\n/g, ' ');
-      
-      this.log('info', `세그먼트 ${i + 1}/${totalSegments} 처리 중: "${segmentPreview}..."`);
+      // 비동기 태스크 생성
+      const task = (async () => {
+        if (this.stopRequested) return;
 
-      try {
-        const entries = await this.extractFromSegment(segment, userOverridePrompt);
-        allExtractedEntries.push(...entries);
-      } catch (error) {
-        this.log('error', `세그먼트 ${i + 1} 처리 중 오류: ${error}`);
+        const segment = sampleSegments[i];
+        const segmentPreview = segment.slice(0, 50).replace(/\n/g, ' ');
+        
+        this.log('info', `세그먼트 ${i + 1}/${totalSegments} 처리 중: "${segmentPreview}..."`);
+
+        try {
+          const entries = await this.extractFromSegment(segment, userOverridePrompt);
+          
+          if (this.stopRequested) return;
+
+          allExtractedEntries.push(...entries);
+        } catch (error) {
+          this.log('error', `세그먼트 ${i + 1} 처리 중 오류: ${error}`);
+        } finally {
+          processedCount++;
+          // 진행률 콜백
+          progressCallback?.({
+            totalSegments,
+            processedSegments: processedCount,
+            currentStatusMessage: `세그먼트 ${processedCount}/${totalSegments} 처리 완료`,
+            extractedEntriesCount: allExtractedEntries.length,
+          });
+        }
+      })();
+
+      // 태스크 관리
+      processingPromises.add(task);
+      task.then(() => processingPromises.delete(task));
+
+      // 최대 워커 수 도달 시 대기
+      if (processingPromises.size >= maxWorkers) {
+        await Promise.race(processingPromises);
       }
-
-      // 진행률 콜백
-      progressCallback?.({
-        totalSegments,
-        processedSegments: i + 1,
-        currentStatusMessage: i + 1 === totalSegments 
-          ? '충돌 해결 및 정리 중...'
-          : `세그먼트 ${i + 1}/${totalSegments} 처리 완료`,
-        extractedEntriesCount: allExtractedEntries.length,
-      });
     }
 
-    // 충돌 해결
+    // 남은 작업 대기
+    await Promise.all(processingPromises);
+
+    // 충돌 해결 (마지막 메시지 업데이트)
+    progressCallback?.({
+      totalSegments,
+      processedSegments: totalSegments,
+      currentStatusMessage: '충돌 해결 및 정리 중...',
+      extractedEntriesCount: allExtractedEntries.length,
+    });
+
     let finalEntries = this.resolveConflicts(allExtractedEntries);
 
     // 최대 항목 수 제한
