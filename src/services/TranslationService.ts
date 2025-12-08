@@ -70,7 +70,9 @@ export class TranslationService {
   private glossaryEntries: GlossaryEntry[] = [];
   private stopRequested: boolean = false;
   private onLog?: LogCallback;
-  private cancelCurrentRequest?: () => void;
+  
+  // 병렬 요청 취소를 위한 컨트롤러 집합
+  private cancelControllers: Set<() => void> = new Set();
 
   constructor(config: AppConfig, apiKey?: string) {
     this.config = config;
@@ -120,11 +122,9 @@ export class TranslationService {
     this.stopRequested = true;
     this.log('warning', '번역 중단이 요청되었습니다.');
     
-    // 현재 대기 중인 요청이 있다면 강제 취소 (Promise.race 트리거)
-    if (this.cancelCurrentRequest) {
-      this.cancelCurrentRequest();
-      this.cancelCurrentRequest = undefined;
-    }
+    // 현재 진행 중인 모든 요청 취소
+    this.cancelControllers.forEach(cancel => cancel());
+    this.cancelControllers.clear();
   }
 
   /**
@@ -132,7 +132,7 @@ export class TranslationService {
    */
   resetStop(): void {
     this.stopRequested = false;
-    this.cancelCurrentRequest = undefined;
+    this.cancelControllers.clear();
   }
 
   /**
@@ -206,12 +206,20 @@ export class TranslationService {
       topP: this.config.topP,
     };
 
+    // 취소 함수 정의
+    let cancelThisRequest: (() => void) | undefined;
+
     // 취소 프로미스 생성
     const cancelPromise = new Promise<string>((_, reject) => {
-      this.cancelCurrentRequest = () => {
+      cancelThisRequest = () => {
         reject(new Error('CANCELLED_BY_USER'));
       };
     });
+
+    // 취소 컨트롤러 등록
+    if (cancelThisRequest) {
+      this.cancelControllers.add(cancelThisRequest);
+    }
 
     try {
       let apiPromise: Promise<string>;
@@ -243,9 +251,6 @@ export class TranslationService {
       // API 호출과 취소 요청 경합
       const translatedText = await Promise.race([apiPromise, cancelPromise]);
       
-      // 완료 후 취소 핸들러 정리
-      this.cancelCurrentRequest = undefined;
-
       this.log('info', `청크 ${chunkIndex + 1} 번역 완료 (${translatedText.length}자)`);
 
       return {
@@ -255,7 +260,6 @@ export class TranslationService {
         success: true,
       };
     } catch (error) {
-      this.cancelCurrentRequest = undefined;
       const errorMessage = error instanceof Error ? error.message : String(error);
 
       // 사용자 중단 처리
@@ -286,6 +290,11 @@ export class TranslationService {
         success: false,
         error: errorMessage,
       };
+    } finally {
+      // 완료 후 취소 핸들러 제거
+      if (cancelThisRequest) {
+        this.cancelControllers.delete(cancelThisRequest);
+      }
     }
   }
 
@@ -368,7 +377,7 @@ export class TranslationService {
 
     this.log('info', `🔄 분할 완료: ${subChunks.length}개 서브 청크 생성`);
 
-    // 7. 각 서브 청크 순차 처리
+    // 7. 각 서브 청크 순차 처리 (하위 청크는 순차 처리 유지하여 복잡도 관리)
     const translatedParts: string[] = [];
 
     for (let i = 0; i < subChunks.length; i++) {
@@ -421,7 +430,7 @@ export class TranslationService {
   }
 
   /**
-   * 전체 텍스트 번역
+   * 전체 텍스트 번역 (병렬 처리 적용)
    * 
    * @param fullText - 전체 원문 텍스트
    * @param onProgress - 진행률 콜백
@@ -434,7 +443,7 @@ export class TranslationService {
     existingResults?: TranslationResult[],
     onResult?: (result: TranslationResult) => void
   ): Promise<TranslationResult[]> {
-    this.stopRequested = false;
+    this.resetStop();
 
     // 청크 분할
     const chunks = this.chunkService.splitTextIntoChunks(fullText, this.config.chunkSize);
@@ -454,6 +463,7 @@ export class TranslationService {
     }
 
     const results: TranslationResult[] = [];
+    const maxWorkers = this.config.maxWorkers || 1;
 
     const progress: TranslationJobProgress = {
       totalChunks: chunks.length,
@@ -465,12 +475,13 @@ export class TranslationService {
 
     // 초기 상태 보고
     onProgress?.(progress);
+    
+    // 현재 처리 중인 Promise 집합 (병렬 처리 제어용)
+    const processingPromises = new Set<Promise<void>>();
 
     for (let i = 0; i < chunks.length; i++) {
       // 중단 체크
       if (this.stopRequested) {
-        progress.currentStatusMessage = '사용자에 의해 중단됨';
-        onProgress?.(progress);
         this.log('warning', '번역이 사용자에 의해 중단되었습니다.');
         break;
       }
@@ -492,41 +503,56 @@ export class TranslationService {
           onProgress?.(progress);
 
           this.log('debug', `청크 ${i + 1} 스킵 (이미 완료됨)`);
-          continue;
+          continue; // Worker를 점유하지 않고 넘어감
         } else {
           this.log('warning', `청크 ${i + 1}의 기존 결과가 있으나 원문 길이가 일치하지 않아 재번역합니다.`);
         }
       }
 
-      // 2. 새로운 번역 실행
-      progress.currentStatusMessage = `청크 ${i + 1}/${chunks.length} 번역 중...`;
-      progress.currentChunkProcessing = i;
-      onProgress?.(progress);
+      // 2. 새로운 번역 실행 (비동기 Task 생성)
+      const task = (async () => {
+        if (this.stopRequested) return;
 
-      const result = await this.translateChunk(chunks[i], i);
-      
-      // 중단 시 결과 추가 안함 (선택사항, 여기서는 실패로라도 추가하거나 중단 처리)
-      if (this.stopRequested) {
-          // 중단된 결과도 추가할지 여부는 정책에 따름. 
-          // 여기서는 성공한 결과만 유효하므로 추가하되 실패 상태로 둠.
+        progress.currentStatusMessage = `청크 ${i + 1}/${chunks.length} 처리 중...`;
+        progress.currentChunkProcessing = i; // 병렬이라 정확하진 않지만 대략적인 위치 표시
+        onProgress?.(progress);
+
+        try {
+          const result = await this.translateChunk(chunks[i], i);
+          
+          if (this.stopRequested) return;
+
+          results.push(result);
+          onResult?.(result);
+
+          // 결과 반영 (Atomic 하지 않으나 JS 싱글스레드 특성상 경쟁조건 없음)
+          progress.processedChunks++;
+          if (result.success) {
+            progress.successfulChunks++;
+          } else {
+            progress.failedChunks++;
+            progress.lastErrorMessage = result.error;
+          }
+          
+          onProgress?.(progress);
+        } catch (err) {
+            // translateChunk 내부에서 대부분 처리되지만 안전망
+            this.log('error', `Task ${i+1} unhandled error: ${err}`);
+        }
+      })();
+
+      // Worker Pool 관리
+      processingPromises.add(task);
+      task.then(() => processingPromises.delete(task));
+
+      // 최대 워커 수 도달 시 대기
+      if (processingPromises.size >= maxWorkers) {
+        await Promise.race(processingPromises);
       }
-
-      results.push(result);
-      
-      // [중요] 번역 결과 실시간 전송
-      onResult?.(result);
-
-      // 결과 반영
-      progress.processedChunks++;
-      if (result.success) {
-        progress.successfulChunks++;
-      } else {
-        progress.failedChunks++;
-        progress.lastErrorMessage = result.error;
-      }
-
-      onProgress?.(progress);
     }
+
+    // 남은 작업 완료 대기
+    await Promise.all(processingPromises);
 
     // 완료
     progress.currentStatusMessage = this.stopRequested ? '번역 중단됨' : '번역 완료';
@@ -535,7 +561,8 @@ export class TranslationService {
 
     this.log('info', `번역 완료: 성공 ${progress.successfulChunks}, 실패 ${progress.failedChunks}`);
 
-    return results;
+    // 병렬 처리로 인해 순서가 섞였을 수 있으므로 정렬
+    return results.sort((a, b) => a.chunkIndex - b.chunkIndex);
   }
 
   /**
@@ -549,7 +576,7 @@ export class TranslationService {
   }
 
   /**
-   * 실패한 청크만 재번역
+   * 실패한 청크만 재번역 (병렬 처리 적용)
    * 
    * @param results - 전체 번역 결과
    * @param onProgress - 진행률 콜백
@@ -568,6 +595,7 @@ export class TranslationService {
     }
 
     this.log('info', `${failedResults.length}개 실패 청크 재번역 시작`);
+    this.resetStop();
 
     const progress: TranslationJobProgress = {
       totalChunks: failedResults.length,
@@ -580,43 +608,60 @@ export class TranslationService {
     onProgress?.(progress);
 
     const updatedResults = [...results];
+    const maxWorkers = this.config.maxWorkers || 1;
+    const processingPromises = new Set<Promise<void>>();
 
     for (const failedResult of failedResults) {
       if (this.stopRequested) break;
 
-      progress.currentStatusMessage = `청크 ${failedResult.chunkIndex + 1} 재번역 중...`;
-      progress.currentChunkProcessing = failedResult.chunkIndex;
-      onProgress?.(progress);
+      const task = (async () => {
+        if (this.stopRequested) return;
 
-      const newResult = await this.translateChunk(
-        failedResult.originalText,
-        failedResult.chunkIndex
-      );
+        progress.currentStatusMessage = `청크 ${failedResult.chunkIndex + 1} 재번역 중...`;
+        progress.currentChunkProcessing = failedResult.chunkIndex;
+        onProgress?.(progress);
 
-      // 결과 업데이트
-      const index = updatedResults.findIndex(r => r.chunkIndex === failedResult.chunkIndex);
-      if (index >= 0) {
-        updatedResults[index] = newResult;
+        const newResult = await this.translateChunk(
+          failedResult.originalText,
+          failedResult.chunkIndex
+        );
+
+        if (this.stopRequested) return;
+
+        // 결과 업데이트
+        const index = updatedResults.findIndex(r => r.chunkIndex === failedResult.chunkIndex);
+        if (index >= 0) {
+          updatedResults[index] = newResult;
+        }
+
+        // [중요] 재번역 결과 실시간 전송
+        onResult?.(newResult);
+
+        progress.processedChunks++;
+        if (newResult.success) {
+          progress.successfulChunks++;
+        } else {
+          progress.failedChunks++;
+          progress.lastErrorMessage = newResult.error;
+        }
+
+        onProgress?.(progress);
+      })();
+
+      processingPromises.add(task);
+      task.then(() => processingPromises.delete(task));
+
+      if (processingPromises.size >= maxWorkers) {
+        await Promise.race(processingPromises);
       }
-
-      // [중요] 재번역 결과 실시간 전송
-      onResult?.(newResult);
-
-      progress.processedChunks++;
-      if (newResult.success) {
-        progress.successfulChunks++;
-      } else {
-        progress.failedChunks++;
-        progress.lastErrorMessage = newResult.error;
-      }
-
-      onProgress?.(progress);
     }
+
+    await Promise.all(processingPromises);
 
     progress.currentStatusMessage = '재번역 완료';
     progress.currentChunkProcessing = undefined;
     onProgress?.(progress);
 
-    return updatedResults;
+    return updatedResults.sort((a, b) => a.chunkIndex - b.chunkIndex);
   }
 }

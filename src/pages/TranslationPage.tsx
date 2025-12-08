@@ -292,6 +292,17 @@ function TranslationSettings() {
           max={100}
         />
 
+        {/* Max Workers */}
+        <Input
+          type="number"
+          label="동시 작업 수 (Max Workers)"
+          value={config.maxWorkers || 1}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ maxWorkers: Math.max(1, parseInt(e.target.value) || 1) })}
+          min={1}
+          max={20}
+          helperText="병렬로 처리할 청크 수입니다. 속도는 빨라지지만 브라우저 부하가 늘어날 수 있습니다."
+        />
+
         {/* 프리필 모드 */}
         <div className="md:col-span-2">
           <Checkbox
