@@ -476,7 +476,15 @@ export class GlossaryService {
    * 용어집을 JSON 문자열로 내보내기 (Snake Case 변환 적용)
    */
   exportToJson(entries: GlossaryEntry[]): string {
-    const exportData = entries.map(entry => ({
+    // [수정] 등장 횟수 정렬
+    const sortedEntries = [...entries].sort((a, b) => {
+      if (b.occurrenceCount !== a.occurrenceCount) {
+        return b.occurrenceCount - a.occurrenceCount;
+      }
+      return a.keyword.localeCompare(b.keyword);
+    });
+
+    const exportData = sortedEntries.map(entry => ({
       keyword: entry.keyword,
       translated_keyword: entry.translatedKeyword,
       target_language: entry.targetLanguage,
@@ -489,8 +497,16 @@ export class GlossaryService {
    * 용어집을 CSV 문자열로 내보내기
    */
   exportToCsv(entries: GlossaryEntry[]): string {
+    // [수정] 등장 횟수 정렬
+    const sortedEntries = [...entries].sort((a, b) => {
+      if (b.occurrenceCount !== a.occurrenceCount) {
+        return b.occurrenceCount - a.occurrenceCount;
+      }
+      return a.keyword.localeCompare(b.keyword);
+    });
+
     const header = 'keyword,translatedKeyword,targetLanguage,occurrenceCount';
-    const rows = entries.map(entry => 
+    const rows = sortedEntries.map(entry => 
       `"${entry.keyword.replace(/"/g, '""')}","${entry.translatedKeyword.replace(/"/g, '""')}","${entry.targetLanguage}",${entry.occurrenceCount}`
     );
     return [header, ...rows].join('\n');

@@ -152,6 +152,7 @@ export function useGlossary() {
       return;
     }
 
+    // exportToJson은 store에서 이미 정렬된 결과를 반환하도록 수정됨
     const json = exportToJson();
     const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -173,11 +174,19 @@ export function useGlossary() {
       return;
     }
 
+    // [수정] 등장 횟수 내림차순 정렬
+    const sortedEntries = [...entries].sort((a, b) => {
+      if (b.occurrenceCount !== a.occurrenceCount) {
+        return b.occurrenceCount - a.occurrenceCount;
+      }
+      return a.keyword.localeCompare(b.keyword);
+    });
+
     // CSV 형식으로 변환
     const headers = ['keyword', 'translatedKeyword', 'targetLanguage', 'occurrenceCount'];
     const csvRows = [headers.join(',')];
     
-    for (const entry of entries) {
+    for (const entry of sortedEntries) {
       const row = [
         `"${entry.keyword.replace(/"/g, '""')}"`,
         `"${entry.translatedKeyword.replace(/"/g, '""')}"`,

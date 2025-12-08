@@ -223,13 +223,16 @@ export const useGlossaryStore = create<GlossaryState>()(
       // === 내보내기/가져오기 ===
       exportToJson: () => {
         const { entries } = get();
-        // exportToJson 로직은 GlossaryService에서 처리하거나, 여기서 동일하게 구현
-        // 일관성을 위해 여기서는 단순 JSON 문자열화만 수행하거나,
-        // 서비스와 동일한 변환 로직을 사용해야 함.
-        // 하지만 요구사항은 GlossaryService 수정이었으므로, 스토어의 exportToJson은
-        // 단순히 내부 상태를 내보내는 용도로 둘 수도 있으나,
-        // 사용자가 다운로드할 때 일관된 포맷을 원하므로 여기서도 변환 적용
-        const exportData = entries.map(entry => ({
+        
+        // [수정] 등장 횟수 내림차순 정렬 (같으면 가나다순)
+        const sortedEntries = [...entries].sort((a, b) => {
+          if (b.occurrenceCount !== a.occurrenceCount) {
+            return b.occurrenceCount - a.occurrenceCount; // 횟수 높은게 먼저
+          }
+          return a.keyword.localeCompare(b.keyword); // 횟수 같으면 가나다순
+        });
+
+        const exportData = sortedEntries.map(entry => ({
           keyword: entry.keyword,
           translated_keyword: entry.translatedKeyword,
           target_language: entry.targetLanguage,
@@ -240,7 +243,10 @@ export const useGlossaryStore = create<GlossaryState>()(
       
       importFromJson: (json) => {
         try {
-          const parsed = JSON.parse(json);
+          // BOM(Byte Order Mark) 제거 및 공백 트림
+          const cleanJson = json.replace(/^\uFEFF/, '').trim();
+          const parsed = JSON.parse(cleanJson);
+          
           if (!Array.isArray(parsed)) {
             console.error('유효하지 않은 용어집 형식: 배열이 아님');
             return false;
@@ -277,7 +283,7 @@ export const useGlossaryStore = create<GlossaryState>()(
             const { mergeEntries } = get();
             mergeEntries(validEntries);
           }
-          return false;
+          return true;
         } catch (error) {
           console.error('용어집 가져오기 실패:', error);
           return false;

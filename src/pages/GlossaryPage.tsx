@@ -52,11 +52,12 @@ function GlossaryToolbar() {
     sortOrder, 
     setSortOrder,
     exportToJson,
-    importFromJson,
     selectedEntries,
     removeEntries,
     deselectAll,
   } = useGlossaryStore();
+
+  const { importGlossaryFile } = useGlossary();
 
   const handleExport = useCallback(() => {
     const json = exportToJson();
@@ -64,16 +65,9 @@ function GlossaryToolbar() {
   }, [exportToJson]);
 
   const handleImport = useCallback(async () => {
-    const file = await FileHandler.selectAndReadFile('.json');
-    if (file) {
-      const success = importFromJson(file.content);
-      if (success) {
-        console.log('용어집 가져오기 성공');
-      } else {
-        console.error('용어집 가져오기 실패');
-      }
-    }
-  }, [importFromJson]);
+    // 훅의 통합 가져오기 기능 사용 (JSON + CSV 지원 및 로깅 포함)
+    await importGlossaryFile();
+  }, [importGlossaryFile]);
 
   const handleDeleteSelected = useCallback(() => {
     if (selectedEntries.size > 0) {
