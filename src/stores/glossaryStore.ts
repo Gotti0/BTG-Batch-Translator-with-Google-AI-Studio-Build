@@ -274,8 +274,8 @@ export const useGlossaryStore = create<GlossaryState>()(
           }
           
           if (validEntries.length > 0) {
-            set({ entries: validEntries });
-            return true;
+            const { mergeEntries } = get();
+            mergeEntries(validEntries);
           }
           return false;
         } catch (error) {
