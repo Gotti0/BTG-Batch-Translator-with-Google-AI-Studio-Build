@@ -1,3 +1,4 @@
+
 // services/GlossaryService.ts
 // Python domain/glossary_service.py 의 TypeScript 변환
 // 텍스트에서 용어집 항목을 AI로 추출하고 관리하는 서비스
@@ -262,6 +263,13 @@ export class GlossaryService {
       this.log('debug', `세그먼트에서 ${entries.length}개 용어 추출됨`);
       return entries;
     } catch (error) {
+      // [추가] 429 Rate Limit 에러 감지 시 용어집 추출 중단
+      if (GeminiClient.isRateLimitError(error as Error)) {
+        this.log('error', `API 할당량 초과(429) 감지. 용어집 추출을 중단합니다.`);
+        this.requestStop(); // 추출 작업 중단 요청
+        return [];
+      }
+
       if (error instanceof GeminiApiException) {
         this.log('error', `용어집 추출 API 오류: ${error.message}`);
       } else {

@@ -262,6 +262,20 @@ export class TranslationService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
+      // [추가] 429 Rate Limit 에러 감지 시 번역 중단
+      if (GeminiClient.isRateLimitError(error as Error)) {
+        this.log('error', `API 할당량 초과(429) 감지. 번역 작업을 중단합니다.`);
+        this.requestStop(); // 전체 작업 중단 요청
+        
+        return {
+          chunkIndex,
+          originalText: chunkText,
+          translatedText: '',
+          success: false,
+          error: 'API 할당량 초과(429)로 인한 자동 중단',
+        };
+      }
+
       // 사용자 중단 처리
       if (errorMessage === 'CANCELLED_BY_USER') {
         this.log('warning', `청크 ${chunkIndex + 1} 번역 중단됨 (사용자 요청)`);
