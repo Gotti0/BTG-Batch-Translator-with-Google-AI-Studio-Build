@@ -269,7 +269,7 @@ function TranslationSettings() {
         const client = getGeminiClient();
         
         // API 키가 없으면 기본 모델만 사용
-        if (!process.env.REACT_APP_GEMINI_API_KEY && typeof window !== 'undefined' && !('__GENAI_API_KEY__' in window)) {
+        if (!process.env.GEMINI_API_KEY && typeof window !== 'undefined' && !('__GENAI_API_KEY__' in window)) {
           setModelOptions([
             { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
             { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
