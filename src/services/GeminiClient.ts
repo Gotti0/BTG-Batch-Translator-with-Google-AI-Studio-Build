@@ -224,9 +224,7 @@ export class GeminiClient {
       // 모델명은 요청 시점에 전달
       const response = await this.client.models.generateContent({
         model: modelName,
-        contents: systemInstruction 
-          ? `${systemInstruction}\n\n${prompt}`
-          : prompt,
+        contents: prompt,
         config: {
           temperature: config?.temperature ?? 0.7,
           topP: config?.topP ?? 0.9,
@@ -236,6 +234,8 @@ export class GeminiClient {
           // [추가] 구조화된 출력 설정 매핑
           responseMimeType: config?.responseMimeType,
           responseSchema: config?.responseJsonSchema,
+          // 시스템 지침을 config에 포함
+          ...(systemInstruction && { systemInstruction }),
         },
       });
 
@@ -340,6 +340,11 @@ export class GeminiClient {
           topP: config?.topP ?? 0.9,
           topK: config?.topK ?? 40,
           maxOutputTokens: config?.maxOutputTokens ?? 8192,
+          // 시스템 지침을 config에 포함
+          ...(systemInstruction && { systemInstruction }),
+          // 구조화된 출력 설정 매핑
+          responseMimeType: config?.responseMimeType,
+          responseSchema: config?.responseJsonSchema,
         },
         history: history.map(msg => ({
           role: msg.role,
@@ -347,12 +352,7 @@ export class GeminiClient {
         })),
       });
 
-      // 시스템 지침이 있으면 프롬프트에 포함
-      const fullPrompt = systemInstruction 
-        ? `${systemInstruction}\n\n${prompt}`
-        : prompt;
-
-      const response = await chat.sendMessage({ message: fullPrompt });
+      const response = await chat.sendMessage({ message: prompt });
       const text = response.text;
       
       if (!text && prompt.trim()) {
@@ -391,14 +391,14 @@ export class GeminiClient {
       // 새로운 SDK: generateContentStream 사용
       const stream = await this.client.models.generateContentStream({
         model: modelName,
-        contents: systemInstruction 
-          ? `${systemInstruction}\n\n${prompt}`
-          : prompt,
+        contents: prompt,
         config: {
           temperature: config?.temperature ?? 0.7,
           topP: config?.topP ?? 0.9,
           topK: config?.topK ?? 40,
           maxOutputTokens: config?.maxOutputTokens ?? 8192,
+          // 시스템 지침을 config에 포함
+          ...(systemInstruction && { systemInstruction }),
         },
       });
 
