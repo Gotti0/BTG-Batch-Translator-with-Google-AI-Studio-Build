@@ -179,7 +179,7 @@ ${segmentText}
 
     try {
       // [핵심 변경] responseJsonSchema를 사용하여 구조화된 출력 요청
-      const rawSchema = zodToJsonSchema(glossaryResponseSchema);
+      const rawSchema = zodToJsonSchema(glossaryResponseSchema as any);
       
       // Gemini API 호환성을 위해 $schema 제거 (INVALID_ARGUMENT 방지)
       const { $schema, ...jsonSchema } = rawSchema as any;
@@ -196,8 +196,22 @@ ${segmentText}
         }
       );
 
-      // 응답은 이미 JSON 문자열임이 보장됨
-      const parsedJson = JSON.parse(responseText);
+      // 응답은 이미 JSON 문자열임이 보장됨 (하지만 짤릴 수 있음)
+      let parsedJson: any;
+      try {
+        parsedJson = JSON.parse(responseText);
+      } catch (error) {
+        this.log('warning', `⚠️ 용어집 JSON 파싱 실패.`);
+        
+        if (responseText.length > 500) {
+             this.log('debug', `📝 원본 응답(앞부분): ${responseText.slice(0, 200)} ...`);
+             this.log('debug', `📝 원본 응답(뒷부분): ... ${responseText.slice(-200)}`);
+        } else {
+             this.log('debug', `📝 원본 응답: ${responseText}`);
+        }
+        
+        throw error; // 용어집은 복구보다는 일단 에러를 던져서 재시도 로직이나 로그 확인 유도
+      }
       
       // Zod 스키마로 유효성 검증 및 타입 추론
       const validatedData = glossaryResponseSchema.parse(parsedJson);

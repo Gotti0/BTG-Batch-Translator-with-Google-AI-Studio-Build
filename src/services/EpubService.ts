@@ -1,3 +1,4 @@
+
 /**
  * EPUB 파일 처리 서비스
  * 
@@ -93,16 +94,14 @@ export class EpubService {
   /**
    * XHTML 문자열을 파싱하여 평탄화된 노드 배열 반환
    * 
-   * 전략:
-   * - <p>, <h1>~<h6>, <div> → type: 'text' (번역 대상)
-   * - <img>, <svg> → type: 'image' (보존)
-   * - 기타 구조 태그 → type: 'ignored' (보존)
+   * 전략 (Recursive Flattening):
+   * - <p>, <h1>~<h6> 등 블록 요소는 즉시 노드로 추출
+   * - <div>, <section> 등 컨테이너는 내부에 블록 요소가 있으면 재귀 순회, 없으면 노드로 추출
+   * - <img>, <svg>는 이미지 노드로 보존
+   * - 인라인 요소(span 등)가 컨테이너 바로 아래 있으면 독립 노드로 처리
    * 
    * [결정론적 ID 규칙]
    * ID = `{fileName}_{nodeIndex}`
-   * 예: Text/chapter1.xhtml_0
-   * 이를 통해 동일한 파일을 다시 파싱해도 항상 동일한 ID가 생성되어
-   * 스냅샷 복구 시 기존 번역 데이터와 매핑이 가능해짐.
    * 
    * @param xhtmlContent XHTML 문자열
    * @param fileName 현재 파싱 중인 파일의 이름(경로)
@@ -118,70 +117,124 @@ export class EpubService {
     }
 
     const nodes: EpubNode[] = [];
-    const textBlockTags = ['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'span', 'section', 'article'];
-    const imageTags = ['img', 'svg'];
-
-    // body 요소 찾기
-    const body = doc.body;
-    if (!body) {
-      console.warn('⚠️ body 요소를 찾을 수 없습니다.');
-      return nodes;
-    }
-
-    // 노드 인덱스 초기화 (결정론적 ID 생성용)
     let nodeIndex = 0;
 
-    // body의 직계 자식들 순회
-    Array.from(body.children).forEach((el) => {
-      const tagName = el.tagName.toLowerCase();
-      // 결정론적 ID 생성
-      const deterministicId = `${fileName}_${nodeIndex++}`;
+    // 태그 분류 정의
+    const imageTags = ['img', 'svg'];
+    // 말단 블록 태그: 더 이상 분해하지 않고 텍스트를 추출할 단위
+    const leafBlockTags = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre', 'hr'];
+    // 컨테이너 태그: 내부 구조에 따라 재귀 여부를 결정할 태그들
+    const potentialContainerTags = [
+      'div', 'section', 'article', 'main', 'aside', 'header', 'footer', 
+      'blockquote', 'ul', 'ol', 'li', 'dl', 'dt', 'dd', 'table', 'tr', 'td', 'th', 'body', 'form', 'nav'
+    ];
 
-      if (imageTags.includes(tagName)) {
-        // 이미지 태그: 원본 HTML 통째로 보존 + 경로 추출
-        let imagePath: string | undefined;
-        
-        if (tagName === 'img') {
-          imagePath = el.getAttribute('src') || undefined;
-        } else if (tagName === 'svg') {
-          // SVG 내부의 image 태그 검색
-          const innerImg = el.querySelector('image');
-          if (innerImg) {
-            imagePath = innerImg.getAttribute('href') || innerImg.getAttribute('xlink:href') || undefined;
+    /**
+     * 재귀 순회 함수
+     */
+    const traverse = (element: Element) => {
+      const children = Array.from(element.children);
+
+      children.forEach((el) => {
+        const tagName = el.tagName.toLowerCase();
+
+        // 1. 이미지 처리
+        if (imageTags.includes(tagName)) {
+          const deterministicId = `${fileName}_${nodeIndex++}`;
+          let imagePath: string | undefined;
+
+          if (tagName === 'img') {
+            imagePath = el.getAttribute('src') || undefined;
+          } else if (tagName === 'svg') {
+            const innerImg = el.querySelector('image');
+            if (innerImg) {
+              imagePath = innerImg.getAttribute('href') || innerImg.getAttribute('xlink:href') || undefined;
+            }
           }
+
+          if (imagePath) {
+            imagePath = this.resolvePath(fileName, imagePath);
+          }
+
+          nodes.push({
+            id: deterministicId,
+            type: 'image',
+            tag: tagName,
+            html: el.outerHTML,
+            imagePath,
+          });
+          return;
         }
 
-        // 경로 정규화 (상대 경로 -> 절대 경로)
-        if (imagePath) {
-          imagePath = this.resolvePath(fileName, imagePath);
+        // 2. 말단 블록 처리 (p, h1, etc.)
+        if (leafBlockTags.includes(tagName)) {
+          const deterministicId = `${fileName}_${nodeIndex++}`;
+          if (tagName === 'hr') {
+            nodes.push({ id: deterministicId, type: 'ignored', tag: tagName, html: el.outerHTML });
+          } else {
+            const content = this.extractPureText(el);
+            if (content) {
+              nodes.push({
+                id: deterministicId,
+                type: 'text',
+                tag: tagName,
+                content,
+                attributes: this.getAttributes(el),
+              });
+            }
+          }
+          return;
         }
 
-        nodes.push({
-          id: deterministicId,
-          type: 'image',
-          tag: tagName,
-          html: el.outerHTML,
-          imagePath,
-        });
-      } else if (textBlockTags.includes(tagName) && el.textContent?.trim()) {
-        // 텍스트 블록 태그: 순수 텍스트만 추출
-        nodes.push({
-          id: deterministicId,
-          type: 'text',
-          tag: tagName,
-          content: this.extractPureText(el),
-          attributes: this.getAttributes(el),
-        });
-      } else if (el.textContent?.trim()) {
-        // 기타 태그이지만 텍스트 있음: ignored로 보존
-        nodes.push({
-          id: deterministicId,
-          type: 'ignored',
-          tag: tagName,
-          html: el.outerHTML,
-        });
-      }
-    });
+        // 3. 컨테이너 처리 (div, section, etc.)
+        if (potentialContainerTags.includes(tagName)) {
+          // 내부에 블록 레벨 자식이 있는지 확인 (재귀 필요성 판단)
+          const hasBlockChildren = Array.from(el.children).some(child => {
+            const t = child.tagName.toLowerCase();
+            return leafBlockTags.includes(t) || potentialContainerTags.includes(t);
+          });
+
+          if (hasBlockChildren) {
+            // 블록 자식이 있으면 컨테이너를 해체하고 내부로 진입
+            traverse(el);
+          } else {
+            // 블록 자식이 없으면(텍스트나 인라인만 있음) 하나의 텍스트 노드로 취급
+            const content = this.extractPureText(el);
+            if (content) {
+              const deterministicId = `${fileName}_${nodeIndex++}`;
+              nodes.push({
+                id: deterministicId,
+                type: 'text',
+                tag: tagName,
+                content,
+                attributes: this.getAttributes(el),
+              });
+            }
+          }
+          return;
+        }
+
+        // 4. 인라인 요소 (span, a, etc.)
+        // 컨테이너 재귀 진입으로 인해 노출된 인라인 요소들은 독립된 텍스트 노드로 처리
+        // (예: <div><p>A</p><span>B</span></div> -> P와 Span이 형제 노드처럼 처리됨)
+        const content = this.extractPureText(el);
+        if (content) {
+          const deterministicId = `${fileName}_${nodeIndex++}`;
+          nodes.push({
+            id: deterministicId,
+            type: 'text',
+            tag: tagName,
+            content,
+            attributes: this.getAttributes(el),
+          });
+        }
+      });
+    };
+
+    // body부터 탐색 시작
+    if (doc.body) {
+      traverse(doc.body);
+    }
 
     return nodes;
   }

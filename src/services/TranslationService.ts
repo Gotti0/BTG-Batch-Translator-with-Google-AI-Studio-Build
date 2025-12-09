@@ -950,8 +950,59 @@ export class TranslationService {
         );
       }
 
-      // 6. 응답 파싱 및 적용
-      const translations: Array<{ id: string; translated_text: string }> = JSON.parse(responseText);
+      // 6. 응답 파싱 및 적용 (에러 핸들링 및 자동 복구 추가)
+      let translations: Array<{ id: string; translated_text: string }> = [];
+
+      try {
+        translations = JSON.parse(responseText);
+      } catch (e) {
+        this.log('warning', `⚠️ JSON 파싱 실패 (청크 ${nodes.length}개). 원본 응답을 확인하고 복구를 시도합니다.`);
+        
+        // 원본 응답 로깅 (길이 제한)
+        const logText = responseText.length > 1000 
+            ? `${responseText.slice(0, 400)} ... [중략] ... ${responseText.slice(-400)}`
+            : responseText;
+        this.log('debug', `📝 파싱 실패 응답: ${logText}`);
+
+        // 복구 시도 1: 잘린 배열 닫기
+        // 마지막으로 닫힌 객체 '}' 찾기
+        const trimmed = responseText.trim();
+        const lastObjectClose = trimmed.lastIndexOf('}');
+        
+        let recovered = false;
+        
+        if (trimmed.startsWith('[') && lastObjectClose > 0) {
+            // 마지막 객체 이후 버리고 ] 닫기
+            const candidate = trimmed.substring(0, lastObjectClose + 1) + ']';
+            try {
+                translations = JSON.parse(candidate);
+                recovered = true;
+                this.log('info', `✅ JSON 구조 자동 복구 성공 (${translations.length}개 항목)`);
+            } catch (retryErr) {
+                // 실패 시 무시
+            }
+        }
+
+        if (!recovered) {
+            // 복구 시도 2: 정규식으로 유효한 객체만 추출
+            // {"id": "...", "translated_text": "..."} 패턴
+            const matches = responseText.match(/\{\s*"id"\s*:\s*"[^"]*"\s*,\s*"translated_text"\s*:\s*"(?:[^"\\]|\\.)*"\s*\}/g);
+            if (matches && matches.length > 0) {
+                 translations = matches.map(m => {
+                     try { return JSON.parse(m); } catch { return null; }
+                 }).filter(t => t !== null) as any;
+                 
+                 if (translations.length > 0) {
+                     recovered = true;
+                     this.log('info', `✅ 정규식 추출 복구 성공 (${translations.length}개 항목)`);
+                 }
+            }
+        }
+
+        if (!recovered) {
+             throw e; // 복구 실패 시 원래 에러 던짐
+        }
+      }
 
       // ID 기준 매핑
       const translationMap = new Map(
