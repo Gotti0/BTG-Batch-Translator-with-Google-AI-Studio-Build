@@ -788,6 +788,12 @@ export class TranslationService {
             successfulChunks++;
             this.log('info', `✅ 청크 ${i + 1}/${chunks.length} 완료`);
           } catch (error) {
+            // 중단 요청 시 재시도 하지 않음
+            if (this.stopRequested) {
+              failedChunks++;
+              return;
+            }
+
             this.log('warning', `⚠️ 청크 ${i + 1}번 번역 실패. 분할 정복 시작...`);
 
             // 오류 발생 시 재귀 분할 정복
@@ -874,11 +880,11 @@ export class TranslationService {
   }
 
   /**
-   * EPUB 노드 배치 번역 (통합된 프롬프트 및 프리필 적용 버전)
-   * 
-   * @param nodes 번역할 노드 배열 (type='text'인 항목만)
-   * @param glossaryEntries 용어집 (선택사항)
-   * @returns 번역된 노드 배열
+   * EPUB 노드 배치 번역 (단순화된 버전)
+   * * 전략:
+   * 1. API 요청
+   * 2. JSON 파싱 시도
+   * 3. 실패 시 즉시 에러 throw -> 상위의 '분할 정복 재시도' 로직이 받아서 처리
    */
   private async translateEpubChunk(
     nodes: EpubNode[],
@@ -950,61 +956,11 @@ export class TranslationService {
         );
       }
 
-      // 6. 응답 파싱 및 적용 (에러 핸들링 및 자동 복구 추가)
-      let translations: Array<{ id: string; translated_text: string }> = [];
+      // [핵심 변경] 복잡한 복구 로직 제거!
+      // 파싱 실패 시 예외가 발생하고, 이는 자동으로 catch 블록으로 이동하여 상위로 전달됩니다.
+      const translations: Array<{ id: string; translated_text: string }> = JSON.parse(responseText);
 
-      try {
-        translations = JSON.parse(responseText);
-      } catch (e) {
-        this.log('warning', `⚠️ JSON 파싱 실패 (청크 ${nodes.length}개). 원본 응답을 확인하고 복구를 시도합니다.`);
-        
-        // 원본 응답 로깅 (길이 제한)
-        const logText = responseText.length > 1000 
-            ? `${responseText.slice(0, 400)} ... [중략] ... ${responseText.slice(-400)}`
-            : responseText;
-        this.log('debug', `📝 파싱 실패 응답: ${logText}`);
-
-        // 복구 시도 1: 잘린 배열 닫기
-        // 마지막으로 닫힌 객체 '}' 찾기
-        const trimmed = responseText.trim();
-        const lastObjectClose = trimmed.lastIndexOf('}');
-        
-        let recovered = false;
-        
-        if (trimmed.startsWith('[') && lastObjectClose > 0) {
-            // 마지막 객체 이후 버리고 ] 닫기
-            const candidate = trimmed.substring(0, lastObjectClose + 1) + ']';
-            try {
-                translations = JSON.parse(candidate);
-                recovered = true;
-                this.log('info', `✅ JSON 구조 자동 복구 성공 (${translations.length}개 항목)`);
-            } catch (retryErr) {
-                // 실패 시 무시
-            }
-        }
-
-        if (!recovered) {
-            // 복구 시도 2: 정규식으로 유효한 객체만 추출
-            // {"id": "...", "translated_text": "..."} 패턴
-            const matches = responseText.match(/\{\s*"id"\s*:\s*"[^"]*"\s*,\s*"translated_text"\s*:\s*"(?:[^"\\]|\\.)*"\s*\}/g);
-            if (matches && matches.length > 0) {
-                 translations = matches.map(m => {
-                     try { return JSON.parse(m); } catch { return null; }
-                 }).filter(t => t !== null) as any;
-                 
-                 if (translations.length > 0) {
-                     recovered = true;
-                     this.log('info', `✅ 정규식 추출 복구 성공 (${translations.length}개 항목)`);
-                 }
-            }
-        }
-
-        if (!recovered) {
-             throw e; // 복구 실패 시 원래 에러 던짐
-        }
-      }
-
-      // ID 기준 매핑
+      // 6. 결과 매핑
       const translationMap = new Map(
         translations.map((t) => [t.id, t.translated_text])
       );
@@ -1021,7 +977,15 @@ export class TranslationService {
       });
 
     } catch (error) {
-      this.log('error', `❌ EPUB 청크 번역 실패: ${error instanceof Error ? error.message : String(error)}`);
+      // [추가] 429 Rate Limit 에러 감지 시 번역 중단
+      if (GeminiClient.isRateLimitError(error as Error)) {
+        this.log('error', `API 할당량 초과(429) 감지. 번역 작업을 중단합니다.`);
+        this.requestStop();
+        throw error;
+      }
+
+      // 로그만 남기고 에러를 상위로 그대로 던짐
+      this.log('warning', `⚠️ 청크 번역/파싱 실패. 분할 재시도를 위해 에러를 상위로 전달합니다.`);
       throw error;
     }
   }
@@ -1043,6 +1007,11 @@ export class TranslationService {
     glossaryEntries?: GlossaryEntry[],
     currentAttempt: number = 1
   ): Promise<EpubNode[]> {
+    // 0. 중단 요청 확인
+    if (this.stopRequested) {
+      return nodes;
+    }
+
     // 1. 탈출 조건: 빈 배열
     if (nodes.length === 0) {
       return [];
@@ -1072,10 +1041,14 @@ export class TranslationService {
 
     // 5. 각 배치를 순차 처리
     for (const batch of [leftBatch, rightBatch]) {
+      if (this.stopRequested) break;
+
       try {
         const translatedBatch = await this.translateEpubChunk(batch, glossaryEntries);
         results.push(...translatedBatch);
       } catch (error) {
+        if (this.stopRequested) break;
+
         this.log('warning', `⚠️ 배치(${batch.length}개) 번역 실패. 재귀 분할 시작.`);
 
         // 실패한 배치만 더 깊이 분할하여 재시도

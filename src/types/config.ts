@@ -172,7 +172,7 @@ export const defaultConfig: AppConfig = {
   maxWorkers: 4,
   
   // EPUB 청크 설정
-  epubMaxNodesPerChunk: 50,
+  epubMaxNodesPerChunk: 30,
   
   // 이미지 주석 설정
   enableImageAnnotation: false,
