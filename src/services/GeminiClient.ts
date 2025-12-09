@@ -78,6 +78,7 @@ const CONTENT_SAFETY_PATTERNS = [
   'blocked due to safety',
   'RECITATION',
   'HARM_CATEGORY',
+  '500',
 ];
 
 /**
