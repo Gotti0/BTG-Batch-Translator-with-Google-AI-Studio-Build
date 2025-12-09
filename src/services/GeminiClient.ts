@@ -256,6 +256,64 @@ export class GeminiClient {
   }
 
   /**
+   * 이미지 설명 생성 (멀티모달)
+   * 
+   * @param imageData - 이미지 바이너리 데이터 (Uint8Array)
+   * @param mimeType - 이미지 MIME 타입 (예: 'image/jpeg')
+   * @param prompt - 프롬프트 (기본값: "Describe this image in detail.")
+   * @param modelName - 모델 이름 (기본값: gemini-2.0-flash)
+   * @returns 생성된 설명 텍스트
+   */
+  async generateImageDescription(
+    imageData: Uint8Array,
+    mimeType: string,
+    prompt: string = "Describe this image in detail.",
+    modelName: string = 'gemini-2.0-flash'
+  ): Promise<string> {
+    await this.applyRpmDelay();
+
+    try {
+      // Base64 인코딩
+      const base64Image = Buffer.from(imageData).toString('base64');
+
+      const response = await this.client.models.generateContent({
+        model: modelName,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  mimeType: mimeType,
+                  data: base64Image,
+                },
+              },
+            ],
+          },
+        ],
+        config: {
+          temperature: 0.4, // 설명은 사실적이어야 하므로 낮게 설정
+          maxOutputTokens: 1024,
+        },
+      });
+
+      const text = response.text;
+      
+      if (!text) {
+        throw new GeminiContentSafetyException('API가 빈 응답을 반환했습니다.');
+      }
+
+      return text;
+    } catch (error) {
+      if (error instanceof GeminiApiException) {
+        throw error;
+      }
+      throw classifyError(error as Error);
+    }
+  }
+
+  /**
    * 채팅 세션을 사용한 텍스트 생성
    * 
    * @param prompt - 현재 프롬프트

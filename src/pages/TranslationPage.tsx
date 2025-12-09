@@ -11,6 +11,7 @@ import { getGeminiClient } from '../services/GeminiClient';
 import { TranslationService } from '../services/TranslationService';
 import { DEFAULT_PREFILL_SYSTEM_INSTRUCTION, DEFAULT_PREFILL_CACHED_HISTORY } from '../types/config';
 import { EpubService } from '../services/EpubService';
+import JSZip from 'jszip';
 import { 
   Button, 
   Select, 
@@ -419,6 +420,16 @@ function TranslationSettings() {
             </div>
           )}
         </div>
+
+        {/* 이미지 주석 생성 */}
+        <div className="md:col-span-2">
+          <Checkbox
+            label="EPUB 이미지 AI 주석 생성 (Image Annotation)"
+            checked={config.enableImageAnnotation}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ enableImageAnnotation: e.target.checked })}
+            description="EPUB 내의 이미지를 분석하여 AI가 설명을 생성하고 텍스트로 추가합니다. (Gemini Vision 모델 필요)"
+          />
+        </div>
       </div>
     </div>
   );
@@ -674,12 +685,24 @@ export function TranslationPage() {
         try {
           // EPUB 번역 서비스 호출
           const translationService = new TranslationService(config);
+          
+          // 이미지 주석 생성을 위한 ZIP 로드
+          let zip: JSZip | undefined;
+          if (config.enableImageAnnotation) {
+            try {
+              zip = await JSZip.loadAsync(epubFile.epubFile);
+            } catch (e) {
+              addLog('warning', '이미지 주석 생성을 위한 EPUB 파일 로드 실패');
+            }
+          }
+
           const translatedNodes = await translationService.translateEpubNodes(
             epubFile.epubChapters.flatMap((ch: any) => ch.nodes),
             [],
             (progress: any) => {
               addLog('info', `📊 진행률: ${progress.processedChunks}/${progress.totalChunks}`);
-            }
+            },
+            zip
           );
 
           // EPUB 재조립 및 다운로드

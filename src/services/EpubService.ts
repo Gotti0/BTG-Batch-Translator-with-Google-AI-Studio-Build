@@ -138,12 +138,30 @@ export class EpubService {
       const deterministicId = `${fileName}_${nodeIndex++}`;
 
       if (imageTags.includes(tagName)) {
-        // 이미지 태그: 원본 HTML 통째로 보존
+        // 이미지 태그: 원본 HTML 통째로 보존 + 경로 추출
+        let imagePath: string | undefined;
+        
+        if (tagName === 'img') {
+          imagePath = el.getAttribute('src') || undefined;
+        } else if (tagName === 'svg') {
+          // SVG 내부의 image 태그 검색
+          const innerImg = el.querySelector('image');
+          if (innerImg) {
+            imagePath = innerImg.getAttribute('href') || innerImg.getAttribute('xlink:href') || undefined;
+          }
+        }
+
+        // 경로 정규화 (상대 경로 -> 절대 경로)
+        if (imagePath) {
+          imagePath = this.resolvePath(fileName, imagePath);
+        }
+
         nodes.push({
           id: deterministicId,
           type: 'image',
           tag: tagName,
           html: el.outerHTML,
+          imagePath,
         });
       } else if (textBlockTags.includes(tagName) && el.textContent?.trim()) {
         // 텍스트 블록 태그: 순수 텍스트만 추출
@@ -166,6 +184,60 @@ export class EpubService {
     });
 
     return nodes;
+  }
+
+  /**
+   * 경로 정규화 (상대 경로 -> 절대 경로)
+   * 
+   * @param basePath 기준 파일 경로 (예: OEBPS/Text/chap1.xhtml)
+   * @param relativePath 상대 경로 (예: ../Images/img1.jpg)
+   * @returns 정규화된 절대 경로 (예: OEBPS/Images/img1.jpg)
+   */
+  private resolvePath(basePath: string, relativePath: string): string {
+    // 이미 절대 경로이거나 URL인 경우
+    if (relativePath.startsWith('/') || relativePath.match(/^[a-z]+:/i)) {
+      return relativePath;
+    }
+
+    const stack = basePath.split('/');
+    stack.pop(); // 현재 파일명 제거 (디렉토리 기준)
+
+    const parts = relativePath.split('/');
+    for (const part of parts) {
+      if (part === '.') continue;
+      if (part === '..') {
+        if (stack.length > 0) stack.pop();
+      } else {
+        stack.push(part);
+      }
+    }
+
+    return stack.join('/');
+  }
+
+  /**
+   * ZIP 파일에서 이미지 데이터 읽기
+   * 
+   * @param zip JSZip 객체
+   * @param path 이미지 파일 경로
+   * @returns 이미지 데이터 (Uint8Array) 또는 null
+   */
+  async getImageData(zip: JSZip, path: string): Promise<Uint8Array | null> {
+    // URL 디코딩 (경로에 %20 등이 포함된 경우 처리)
+    const decodedPath = decodeURIComponent(path);
+    const file = zip.file(decodedPath);
+    
+    if (!file) {
+      console.warn(`이미지 파일을 찾을 수 없습니다: ${decodedPath}`);
+      // 대소문자 무시하고 검색 시도 (일부 EPUB은 경로 대소문자가 불일치함)
+      const foundFile = zip.file(new RegExp(decodedPath, 'i'))[0];
+      if (foundFile) {
+        console.log(`대소문자 무시 검색으로 파일 찾음: ${foundFile.name}`);
+        return await foundFile.async('uint8array');
+      }
+      return null;
+    }
+    return await file.async('uint8array');
   }
 
   /**

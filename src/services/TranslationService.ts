@@ -5,6 +5,8 @@
 import { GeminiClient, GeminiContentSafetyException, GenerationConfig } from './GeminiClient';
 import { ChunkService } from './ChunkService';
 import { EpubChunkService } from './EpubChunkService';
+import { ImageAnnotationService } from './ImageAnnotationService';
+import JSZip from 'jszip';
 import type { 
   GlossaryEntry, 
   TranslationResult, 
@@ -69,15 +71,16 @@ export class TranslationService {
   private geminiClient: GeminiClient;
   private chunkService: ChunkService;
   private config: AppConfig;
+  private apiKey?: string;
   private glossaryEntries: GlossaryEntry[] = [];
   private stopRequested: boolean = false;
   private onLog?: LogCallback;
   
   // 병렬 요청 취소를 위한 컨트롤러 집합
   private cancelControllers: Set<() => void> = new Set();
-
   constructor(config: AppConfig, apiKey?: string) {
     this.config = config;
+    this.apiKey = apiKey;
     this.geminiClient = new GeminiClient(apiKey, config.requestsPerMinute);
     this.chunkService = new ChunkService(config.chunkSize);
   }
@@ -721,12 +724,14 @@ export class TranslationService {
    * @param nodes 번역할 EpubNode 배열
    * @param glossaryEntries 용어집 (선택사항)
    * @param onProgress 진행 콜백 (선택사항)
+   * @param zip EPUB ZIP 객체 (이미지 주석 생성용, 선택사항)
    * @returns 번역된 EpubNode 배열
    */
   async translateEpubNodes(
     nodes: EpubNode[],
     glossaryEntries?: GlossaryEntry[],
-    onProgress?: ProgressCallback
+    onProgress?: ProgressCallback,
+    zip?: JSZip
   ): Promise<EpubNode[]> {
     this.resetStop();
     this.log('info', `🚀 EPUB 번역 시작: ${nodes.length}개 노드`);
@@ -833,7 +838,7 @@ export class TranslationService {
       await Promise.all(processingPromises);
 
       // 4. 결과 조합 (순서 보장)
-      const translatedNodes: EpubNode[] = [];
+      let translatedNodes: EpubNode[] = [];
       for (let i = 0; i < chunks.length; i++) {
         if (chunkResults.has(i)) {
           translatedNodes.push(...chunkResults.get(i)!);
@@ -841,6 +846,23 @@ export class TranslationService {
           // 처리되지 않은 청크(중단됨 등)는 원본 유지
           translatedNodes.push(...chunks[i]);
         }
+      }
+
+      // 5. 이미지 주석 생성 (옵션)
+      if (this.config.enableImageAnnotation && zip) {
+        this.log('info', '🖼️ 이미지 주석 생성 시작...');
+        const imageAnnotationService = new ImageAnnotationService(this.config, this.apiKey);
+        if (this.onLog) {
+            imageAnnotationService.setLogCallback(this.onLog);
+        }
+        
+        translatedNodes = await imageAnnotationService.annotateImages(
+            translatedNodes, 
+            zip, 
+            (progress) => {
+                 this.log('info', `이미지 처리: ${progress.processedImages}/${progress.totalImages} (${progress.currentStatusMessage})`);
+            }
+        );
       }
 
       this.log('info', `📚 EPUB 번역 완료: ${translatedNodes.length}개 노드`);

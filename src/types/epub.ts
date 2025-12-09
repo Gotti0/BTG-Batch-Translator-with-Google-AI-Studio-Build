@@ -25,6 +25,9 @@ export interface EpubNode {
   /** 보존할 원본 HTML (type='image' 또는 'ignored'인 경우) */
   html?: string;
 
+  /** 이미지 파일 경로 (type='image'인 경우). ZIP 내부의 절대 경로로 변환하여 저장 */
+  imagePath?: string;
+
   /** 태그 속성 (class, style 등 보존용) */
   attributes?: Record<string, string>;
 }

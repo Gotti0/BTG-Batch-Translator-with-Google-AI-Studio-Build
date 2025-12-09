@@ -27,6 +27,9 @@ export interface AppConfig {
   // EPUB 청크 설정
   epubMaxNodesPerChunk: number;
   
+  // 이미지 주석 설정
+  enableImageAnnotation: boolean;
+  
   // 언어 설정
   novelLanguage: string;
   novelLanguageFallback: string;
@@ -170,6 +173,9 @@ export const defaultConfig: AppConfig = {
   
   // EPUB 청크 설정
   epubMaxNodesPerChunk: 50,
+  
+  // 이미지 주석 설정
+  enableImageAnnotation: false,
   
   // 언어 설정
   novelLanguage: 'auto',
