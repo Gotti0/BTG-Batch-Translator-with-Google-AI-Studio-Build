@@ -599,7 +599,7 @@ function ResultPreview({ mode }: { mode: 'text' | 'epub' }) {
  */
 export function TranslationPage() {
   const { config, exportConfig } = useSettingsStore();
-  const { addLog, results, translatedText } = useTranslationStore();
+  const { addLog, results, translatedText, addResult } = useTranslationStore();
   const [mode, setMode] = useState<'text' | 'epub'>('text');
   const [epubChapters, setEpubChapters] = useState<any[]>([]);
   
@@ -656,6 +656,9 @@ export function TranslationPage() {
             (progress: any) => {
               // 진행률 로그는 너무 빈번할 수 있으므로 필요 시 주석 처리하거나 빈도 조절
               // addLog('debug', `진행률: ${progress.processedChunks}/${progress.totalChunks}`);
+            },
+            (result) => {
+              addResult(result);
             },
             zip
           );

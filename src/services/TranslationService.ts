@@ -731,6 +731,7 @@ export class TranslationService {
     nodes: EpubNode[],
     glossaryEntries?: GlossaryEntry[],
     onProgress?: ProgressCallback,
+    onResult?: (result: TranslationResult) => void,
     zip?: JSZip
   ): Promise<EpubNode[]> {
     this.resetStop();
@@ -787,6 +788,16 @@ export class TranslationService {
             chunkResults.set(i, translated);
             successfulChunks++;
             this.log('info', `✅ 청크 ${i + 1}/${chunks.length} 완료`);
+
+            // [추가] 실시간 결과 보고
+            if (onResult) {
+              onResult({
+                chunkIndex: i,
+                originalText: chunks[i].map(n => n.content || '').join('\n\n'),
+                translatedText: translated.map(n => n.content || '').join('\n\n'),
+                success: true
+              });
+            }
           } catch (error) {
             // 중단 요청 시 재시도 하지 않음
             if (this.stopRequested) {
@@ -805,6 +816,16 @@ export class TranslationService {
             );
             chunkResults.set(i, retriedNodes);
             failedChunks++;
+
+            // [추가] 재시도 결과 보고 (실패로 간주되더라도 결과는 표시)
+            if (onResult) {
+              onResult({
+                chunkIndex: i,
+                originalText: chunks[i].map(n => n.content || '').join('\n\n'),
+                translatedText: retriedNodes.map(n => n.content || '').join('\n\n'),
+                success: true // 부분적으로 성공했을 수 있으므로 true로 처리하거나, 별도 상태 필요
+              });
+            }
           } finally {
             processedChunks++;
             
@@ -928,8 +949,21 @@ export class TranslationService {
       },
     };
 
+    // [추가] 취소 컨트롤러 설정
+    let cancelThisRequest: (() => void) | undefined;
+    const cancelPromise = new Promise<string>((_, reject) => {
+      cancelThisRequest = () => {
+        reject(new Error('CANCELLED_BY_USER'));
+      };
+    });
+
+    if (cancelThisRequest) {
+      this.cancelControllers.add(cancelThisRequest);
+    }
+
     try {
       let responseText: string;
+      let apiPromise: Promise<string>;
 
       // 5. API 호출 (Prefill 설정 적용)
       if (this.config.enablePrefillTranslation) {
@@ -939,7 +973,7 @@ export class TranslationService {
           content: item.parts.join('\n'),
         }));
         
-        responseText = await this.geminiClient.generateWithChat(
+        apiPromise = this.geminiClient.generateWithChat(
           prompt,
           this.config.prefillSystemInstruction,
           chatHistory,
@@ -948,13 +982,16 @@ export class TranslationService {
         );
       } else {
         // 일반 모드
-        responseText = await this.geminiClient.generateText(
+        apiPromise = this.geminiClient.generateText(
           prompt,
           this.config.modelName,
           this.config.prefillSystemInstruction,
           config
         );
       }
+
+      // [변경] API 호출과 취소 요청 경합
+      responseText = await Promise.race([apiPromise, cancelPromise]);
 
       // [핵심 변경] 복잡한 복구 로직 제거!
       // 파싱 실패 시 예외가 발생하고, 이는 자동으로 catch 블록으로 이동하여 상위로 전달됩니다.
@@ -977,6 +1014,8 @@ export class TranslationService {
       });
 
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
       // [추가] 429 Rate Limit 에러 감지 시 번역 중단
       if (GeminiClient.isRateLimitError(error as Error)) {
         this.log('error', `API 할당량 초과(429) 감지. 번역 작업을 중단합니다.`);
@@ -984,9 +1023,20 @@ export class TranslationService {
         throw error;
       }
 
+      // [추가] 사용자 중단 처리
+      if (errorMessage === 'CANCELLED_BY_USER') {
+        this.log('warning', `EPUB 청크 번역 중단됨 (사용자 요청)`);
+        throw error;
+      }
+
       // 로그만 남기고 에러를 상위로 그대로 던짐
       this.log('warning', `⚠️ 청크 번역/파싱 실패. 분할 재시도를 위해 에러를 상위로 전달합니다.`);
       throw error;
+    } finally {
+      // [추가] 완료 후 취소 핸들러 제거
+      if (cancelThisRequest) {
+        this.cancelControllers.delete(cancelThisRequest);
+      }
     }
   }
 
