@@ -158,6 +158,7 @@ export interface TranslationSnapshot {
     enable_dynamic_glossary_injection?: boolean;
     max_glossary_entries_per_chunk_injection?: number;
     max_glossary_chars_per_chunk_injection?: number;
+    glossary_extraction_prompt?: string;
 
     // EPUB 설정
     enable_image_annotation?: boolean;

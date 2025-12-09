@@ -336,6 +336,7 @@ export function useTranslation() {
         enable_dynamic_glossary_injection: config.enableDynamicGlossaryInjection,
         max_glossary_entries_per_chunk_injection: config.maxGlossaryEntriesPerChunkInjection,
         max_glossary_chars_per_chunk_injection: config.maxGlossaryCharsPerChunkInjection,
+        glossary_extraction_prompt: config.glossaryExtractionPrompt,
         
         enable_image_annotation: config.enableImageAnnotation,
       },
@@ -458,6 +459,7 @@ export function useTranslation() {
         enableDynamicGlossaryInjection: snapshot.config.enable_dynamic_glossary_injection ?? config.enableDynamicGlossaryInjection,
         maxGlossaryEntriesPerChunkInjection: snapshot.config.max_glossary_entries_per_chunk_injection ?? config.maxGlossaryEntriesPerChunkInjection,
         maxGlossaryCharsPerChunkInjection: snapshot.config.max_glossary_chars_per_chunk_injection ?? config.maxGlossaryCharsPerChunkInjection,
+        glossaryExtractionPrompt: snapshot.config.glossary_extraction_prompt ?? config.glossaryExtractionPrompt,
         
         enableImageAnnotation: snapshot.config.enable_image_annotation ?? config.enableImageAnnotation,
       });
