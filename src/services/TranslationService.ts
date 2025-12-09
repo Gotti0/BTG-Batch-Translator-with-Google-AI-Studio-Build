@@ -733,7 +733,7 @@ export class TranslationService {
     try {
       // 1. EpubChunkService로 배열 분할
       const epubChunkService = new EpubChunkService(
-        this.config.epubChunkSize,
+        this.config.chunkSize,
         this.config.epubMaxNodesPerChunk
       );
 

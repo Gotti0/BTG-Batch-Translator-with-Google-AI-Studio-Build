@@ -25,7 +25,6 @@ export interface AppConfig {
   maxWorkers: number;
   
   // EPUB 청크 설정
-  epubChunkSize: number;
   epubMaxNodesPerChunk: number;
   
   // 언어 설정
@@ -170,7 +169,6 @@ export const defaultConfig: AppConfig = {
   maxWorkers: 1,
   
   // EPUB 청크 설정
-  epubChunkSize: 5000,
   epubMaxNodesPerChunk: 30,
   
   // 언어 설정
