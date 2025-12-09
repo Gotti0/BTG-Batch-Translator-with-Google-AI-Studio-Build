@@ -152,7 +152,7 @@ export class ImageAnnotationService {
 
           // 2. AI 주석 생성
           const mimeType = this.getMimeType(imageNode.imagePath);
-          const prompt = "Describe this image in detail in Korean. Focus on visual elements, text within the image, and overall context.";
+          const prompt = "You are an OCR-capable translation assistant. Your sole job is to detect every piece of readable text in the provided image and translate it into natural, fluent Korean.\nStrict Instructions:\n1. Extract only the text that is clearly visible in the image. Do not guess, infer, or hallucinate any content.\n2. Translate the exact extracted text into Korean that sounds completely native—no literal or awkward phrasing.\n3. Output must consist of Korean text only. Do not include the original text, any foreign-language snippets, transliterations, explanations, annotations, or formatting (e.g. Markdown).\n4. If the image contains no legible text, return an empty string: `\"\"`.\n\nRespond with nothing but the final Korean translation.```\n\nThis version makes each step unambiguous and emphasizes the “no extras” rule.";
           
           const description = await this.geminiClient.generateImageDescription(
             imageData,

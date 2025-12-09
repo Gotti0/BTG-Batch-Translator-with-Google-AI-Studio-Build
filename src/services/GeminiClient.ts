@@ -260,15 +260,15 @@ export class GeminiClient {
    * 
    * @param imageData - 이미지 바이너리 데이터 (Uint8Array)
    * @param mimeType - 이미지 MIME 타입 (예: 'image/jpeg')
-   * @param prompt - 프롬프트 (기본값: "Describe this image in detail.")
-   * @param modelName - 모델 이름 (기본값: gemini-2.0-flash)
+   * @param prompt - 프롬프트 
+   * @param modelName - 모델 이름 (기본값: gemini-2.5-flash)
    * @returns 생성된 설명 텍스트
    */
   async generateImageDescription(
     imageData: Uint8Array,
     mimeType: string,
     prompt: string = "Describe this image in detail.",
-    modelName: string = 'gemini-2.0-flash'
+    modelName: string = 'gemini-2.5-flash'
   ): Promise<string> {
     await this.applyRpmDelay();
 
@@ -294,7 +294,6 @@ export class GeminiClient {
         ],
         config: {
           temperature: 0.4, // 설명은 사실적이어야 하므로 낮게 설정
-          maxOutputTokens: 1024,
         },
       });
 
