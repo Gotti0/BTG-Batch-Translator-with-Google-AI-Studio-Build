@@ -169,7 +169,7 @@ export const defaultConfig: AppConfig = {
   maxWorkers: 1,
   
   // EPUB 청크 설정
-  epubMaxNodesPerChunk: 30,
+  epubMaxNodesPerChunk: 50,
   
   // 언어 설정
   novelLanguage: 'auto',
