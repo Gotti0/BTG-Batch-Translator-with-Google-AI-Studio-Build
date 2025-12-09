@@ -92,11 +92,18 @@ export interface QualityIssue {
 /**
  * 파일 콘텐츠 정보
  */
+/**
+ * 파일 내용 (텍스트 또는 EPUB)
+ */
 export interface FileContent {
   name: string;
   content: string;
   size: number;
   lastModified: number;
+  // Phase 4-5: EPUB 지원
+  epubFile?: File;           // 원본 EPUB File 객체
+  epubChapters?: any[];      // EpubChapter[] 타입 (순환 참조 방지)
+  isEpub?: boolean;          // EPUB 파일 여부
 }
 
 /**
@@ -106,6 +113,17 @@ export interface LogEntry {
   level: 'info' | 'warning' | 'error' | 'debug';
   message: string;
   timestamp: Date;
+}
+
+/**
+ * EPUB 구조 정보 (스냅샷에 저장될 메타데이터)
+ */
+export interface EpubStructureMetadata {
+  chapters: {
+    id: string;
+    filename: string;
+    nodeCount: number;
+  }[];
 }
 
 /**
@@ -127,6 +145,8 @@ export interface TranslationSnapshot {
     model_name: string;
     prompt_template?: string;
   };
+  // Phase 5: 번역 모드 (text 또는 epub)
+  mode?: 'text' | 'epub';
   source_text: string;
   progress: {
     total_chunks: number;
@@ -137,4 +157,8 @@ export interface TranslationSnapshot {
     translated_text: string;
     status: string;
   }>;
+  // Phase 5: EPUB 모드 시 필요한 구조 정보
+  epub_structure?: EpubStructureMetadata;
+  // Phase 5: EPUB 바이너리 (Base64 인코딩)
+  epub_binary?: string;
 }

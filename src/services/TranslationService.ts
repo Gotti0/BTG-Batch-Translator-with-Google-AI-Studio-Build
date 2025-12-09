@@ -4,6 +4,7 @@
 
 import { GeminiClient, GeminiContentSafetyException, GenerationConfig } from './GeminiClient';
 import { ChunkService } from './ChunkService';
+import { EpubChunkService } from './EpubChunkService';
 import type { 
   GlossaryEntry, 
   TranslationResult, 
@@ -11,6 +12,7 @@ import type {
   LogEntry 
 } from '../types/dtos';
 import type { AppConfig, PrefillHistoryItem } from '../types/config';
+import type { EpubNode, EpubChapter } from '../types/epub';
 
 /**
  * 번역 진행 콜백 타입
@@ -321,8 +323,8 @@ export class TranslationService {
     currentAttempt: number = 1
   ): Promise<TranslationResult> {
     // 1. 최대 시도 횟수 초과 체크
-    if (currentAttempt > this.config.maxContentSafetySplitAttempts) {
-      this.log('error', `최대 분할 시도 횟수(${this.config.maxContentSafetySplitAttempts}) 도달. 번역 실패.`);
+    if (currentAttempt > this.config.maxRetryAttempts) {
+      this.log('error', `최대 분할 시도 횟수(${this.config.maxRetryAttempts}) 도달. 번역 실패.`);
       return {
         chunkIndex: originalIndex,
         originalText: chunkText,
@@ -711,5 +713,247 @@ export class TranslationService {
     onProgress?.(progress);
 
     return updatedResults.sort((a, b) => a.chunkIndex - b.chunkIndex);
+  }
+
+  /**
+   * EPUB 노드 배열 번역 (공개 메서드)
+   * 
+   * @param nodes 번역할 EpubNode 배열
+   * @param glossaryEntries 용어집 (선택사항)
+   * @param onProgress 진행 콜백 (선택사항)
+   * @returns 번역된 EpubNode 배열
+   */
+  async translateEpubNodes(
+    nodes: EpubNode[],
+    glossaryEntries?: GlossaryEntry[],
+    onProgress?: ProgressCallback
+  ): Promise<EpubNode[]> {
+    this.log('info', `🚀 EPUB 번역 시작: ${nodes.length}개 노드`);
+
+    try {
+      // 1. EpubChunkService로 배열 분할
+      const epubChunkService = new EpubChunkService(
+        this.config.epubChunkSize,
+        this.config.epubMaxNodesPerChunk
+      );
+
+      const chunks = epubChunkService.splitEpubNodesIntoChunks(nodes);
+      this.log('info', `📦 ${chunks.length}개 청크로 분할 완료`);
+
+      // 2. 각 청크별 번역
+      const translatedNodes: EpubNode[] = [];
+      let processedChunks = 0;
+      let failedChunks = 0;
+
+      for (let i = 0; i < chunks.length; i++) {
+        try {
+          const translated = await this.translateEpubChunk(
+            chunks[i],
+            glossaryEntries
+          );
+          translatedNodes.push(...translated);
+          processedChunks++;
+
+          // 진행률 업데이트
+          if (onProgress) {
+            onProgress({
+              totalChunks: chunks.length,
+              processedChunks,
+              successfulChunks: processedChunks,
+              failedChunks,
+              currentStatusMessage: `청크 ${i + 1}/${chunks.length} 번역 완료`,
+            });
+          }
+
+          this.log('info', `✅ 청크 ${i + 1}/${chunks.length} 완료`);
+        } catch (error) {
+          this.log('warning', `⚠️ 청크 ${i}번 번역 실패. 분할 정복 시작...`);
+
+          // 오류 발생 시 재귀 분할 정복
+          const retriedNodes = await this.retryEpubNodesWithSmallerBatches(
+            chunks[i],
+            i,
+            glossaryEntries,
+            1
+          );
+          translatedNodes.push(...retriedNodes);
+          failedChunks++;
+
+          if (onProgress) {
+            onProgress({
+              totalChunks: chunks.length,
+              processedChunks: i + 1,
+              successfulChunks: processedChunks,
+              failedChunks,
+              currentStatusMessage: `청크 ${i + 1}/${chunks.length} 재시도 완료`,
+            });
+          }
+        }
+      }
+
+      this.log('info', `📚 EPUB 번역 완료: ${translatedNodes.length}개 노드`);
+      return translatedNodes;
+    } catch (error) {
+      this.log('error', `❌ EPUB 번역 실패: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  }
+
+  /**
+   * EPUB 노드 배치 번역 (실제 API 호출)
+   * 
+   * @param nodes 번역할 노드 배열 (type='text'인 항목만)
+   * @param glossaryEntries 용어집 (선택사항)
+   * @returns 번역된 노드 배열
+   */
+  private async translateEpubChunk(
+    nodes: EpubNode[],
+    glossaryEntries?: GlossaryEntry[]
+  ): Promise<EpubNode[]> {
+    // 1. 텍스트 노드만 필터링
+    const textNodes = nodes.filter((n) => n.type === 'text');
+
+    if (textNodes.length === 0) {
+      return nodes; // 텍스트 노드 없음 → 원본 반환
+    }
+
+    // 2. 요청 데이터 구성
+    const requestData = textNodes.map((n) => ({
+      id: n.id,
+      text: n.content,
+    }));
+
+    // 3. 프롬프트 구성
+    const glossaryContext = glossaryEntries
+      ? formatGlossaryForPrompt(glossaryEntries, textNodes.map(n => n.content).join(' '))
+      : '용어집 없음';
+
+    const prompt = `
+다음 텍스트 배열을 지정된 대상 언어로 번역하세요.
+
+**용어집 (필요시 참고):**
+${glossaryContext}
+
+**번역 대상 텍스트:**
+${JSON.stringify(requestData, null, 2)}
+
+**응답 형식:**
+JSON 배열로, 각 항목은 { id, translated_text } 형태입니다.
+원본 텍스트의 의미를 정확히 전달하는 자연스러운 번역을 제공하세요.
+`;
+
+    // 4. JSON Schema 기반 API 호출
+    const config: GenerationConfig = {
+      responseMimeType: 'application/json',
+      responseJsonSchema: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            id: { type: 'STRING' },
+            translated_text: { type: 'STRING' },
+          },
+          required: ['id', 'translated_text'],
+        },
+      },
+    };
+
+    try {
+      // 실제 API 호출
+      const response = await this.geminiClient.generateText(
+        prompt,
+        this.config.modelName,
+        undefined,
+        config
+      );
+
+      // 5. 응답 파싱
+      const translations: Array<{ id: string; translated_text: string }> = JSON.parse(response);
+
+      // 6. ID 기준 매핑
+      const translationMap = new Map(
+        translations.map((t) => [t.id, t.translated_text])
+      );
+
+      // 7. 원본 노드에 번역 결과 병합
+      return nodes.map((node) => {
+        if (node.type === 'text' && translationMap.has(node.id)) {
+          return {
+            ...node,
+            content: translationMap.get(node.id),
+          };
+        }
+        return node; // 번역 없는 노드는 그대로 반환
+      });
+    } catch (error) {
+      this.log('error', `❌ EPUB 청크 번역 API 호출 실패: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  }
+
+  /**
+   * EPUB 노드 배열의 재귀적 분할 정복 재시도 로직
+   * 
+   * Rate Limit, Safety Filter, Context Overflow 등의 오류 시 자동 복구
+   * 
+   * @param nodes 번역할 EpubNode 배열
+   * @param originalChunkIndex 로깅용 청크 인덱스
+   * @param glossaryEntries 용어집 (선택사항)
+   * @param currentAttempt 현재 시도 깊이
+   * @returns 번역된 EpubNode 배열 (실패한 노드는 원문 유지)
+   */
+  private async retryEpubNodesWithSmallerBatches(
+    nodes: EpubNode[],
+    originalChunkIndex: number,
+    glossaryEntries?: GlossaryEntry[],
+    currentAttempt: number = 1
+  ): Promise<EpubNode[]> {
+    // 1. 탈출 조건: 빈 배열
+    if (nodes.length === 0) {
+      return [];
+    }
+
+    // 2. 탈출 조건: 단일 노드인데도 실패한 경우
+    if (nodes.length === 1) {
+      this.log('error', `❌ 노드 ID ${nodes[0].id} 번역 실패 (개별 격리됨). 원문 유지.`);
+      return [nodes[0]]; // 원문 그대로 반환
+    }
+
+    // 3. 탈출 조건: 최대 깊이 도달
+    const maxRetryDepth = this.config.maxRetryAttempts;
+    if (currentAttempt > maxRetryDepth) {
+      this.log('error', `⚠️ 최대 분할 시도 ${maxRetryDepth}회 초과. 해당 배치 원문 반환.`);
+      return nodes;
+    }
+
+    // 4. 배열을 이진 분할 (Binary Split)
+    const mid = Math.floor(nodes.length / 2);
+    const leftBatch = nodes.slice(0, mid);
+    const rightBatch = nodes.slice(mid);
+
+    this.log('info', `🔄 배치 분할 재시도 #${currentAttempt}: ${nodes.length}개 노드 → ${leftBatch.length}개 + ${rightBatch.length}개`);
+
+    const results: EpubNode[] = [];
+
+    // 5. 각 배치를 순차 처리
+    for (const batch of [leftBatch, rightBatch]) {
+      try {
+        const translatedBatch = await this.translateEpubChunk(batch, glossaryEntries);
+        results.push(...translatedBatch);
+      } catch (error) {
+        this.log('warning', `⚠️ 배치(${batch.length}개) 번역 실패. 재귀 분할 시작.`);
+
+        // 실패한 배치만 더 깊이 분할하여 재시도
+        const retriedResults = await this.retryEpubNodesWithSmallerBatches(
+          batch,
+          originalChunkIndex,
+          glossaryEntries,
+          currentAttempt + 1
+        );
+        results.push(...retriedResults);
+      }
+    }
+
+    return results;
   }
 }

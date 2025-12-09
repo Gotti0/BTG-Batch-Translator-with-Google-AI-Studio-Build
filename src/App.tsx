@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, BookOpen, CheckCircle, ScrollText } from 'lucide-react';
+import { Settings, BookOpen, CheckCircle, ScrollText, Zap } from 'lucide-react';
 
 // 페이지 컴포넌트 import
 import { TranslationPage, GlossaryPage, ReviewPage, LogPage } from './pages';

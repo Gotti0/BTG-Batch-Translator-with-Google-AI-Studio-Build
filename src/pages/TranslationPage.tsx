@@ -2,13 +2,15 @@
 // 설정 및 번역 페이지
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { Play, Square, Save, Upload, Settings, Zap, Download, RefreshCw, RotateCcw, FileJson } from 'lucide-react';
+import { Play, Square, Save, Upload, Settings, Zap, Download, RefreshCw, RotateCcw, FileJson, BookOpen } from 'lucide-react';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTranslationStore } from '../stores/translationStore';
 import { useTranslation } from '../hooks/useTranslation';
 import { FileHandler } from '../utils/fileHandler';
 import { getGeminiClient } from '../services/GeminiClient';
+import { TranslationService } from '../services/TranslationService';
 import { DEFAULT_PREFILL_SYSTEM_INSTRUCTION, DEFAULT_PREFILL_CACHED_HISTORY } from '../types/config';
+import { EpubService } from '../services/EpubService';
 import { 
   Button, 
   Select, 
@@ -25,49 +27,80 @@ import type { FileContent } from '../types/dtos';
 /**
  * 파일 업로드 영역 컴포넌트
  */
-function FileUploadSection({ onImportSnapshot }: { onImportSnapshot: (file: File) => void }) {
+function FileUploadSection({ onImportSnapshot, mode, onEpubChaptersChange, onModeChange, epubChapters }: { onImportSnapshot: (file: File) => Promise<string | void>; mode: 'text' | 'epub'; onEpubChaptersChange: (chapters: any[]) => void; onModeChange: (mode: 'text' | 'epub') => void; epubChapters: any[] }) {
   const { inputFiles, addInputFiles, removeInputFile, clearInputFiles, addLog } = useTranslationStore();
   
   // File 객체를 FileContent로 변환하여 스토어에 추가 또는 스냅샷 복구
   const handleFilesSelected = useCallback(async (files: File[]) => {
-    const textFiles: FileContent[] = [];
+    const textFiles: any[] = [];
     let snapshotFound = false;
     
     for (const file of files) {
       // JSON 파일(스냅샷) 감지
       if (file.name.endsWith('.json')) {
         addLog('info', `스냅샷 파일 감지: ${file.name}`);
-        onImportSnapshot(file);
+        const restoredMode = await onImportSnapshot(file);
+        // Phase 5: 스냅샷의 모드가 반환되면 자동으로 모드 전환
+        if (restoredMode) {
+          onModeChange(restoredMode as 'text' | 'epub');
+          addLog('info', `📋 모드 자동 변경: ${restoredMode}`);
+        }
         snapshotFound = true;
-        // 스냅샷이 있으면 텍스트 파일 처리는 중단 (단일 세션 복구 우선)
         return; 
       }
 
-      try {
-        const content = await file.text();
-        textFiles.push({
-          name: file.name,
-          content,
-          size: file.size,
-          lastModified: file.lastModified,
-        });
-      } catch (error) {
-        console.error(`파일 읽기 실패: ${file.name}`, error);
+      // EPUB 파일 처리
+      if (mode === 'epub' && file.name.endsWith('.epub')) {
+        try {
+          addLog('info', `EPUB 파일 로드 중: ${file.name}`);
+          const epubService = new EpubService();
+          const chapters = await epubService.parseEpubFile(file);
+          
+          onEpubChaptersChange(chapters);
+          addLog('info', `✅ EPUB 파싱 완료: ${chapters.length}개 챕터`);
+          
+          // inputFiles에 원본 파일 정보 저장
+          textFiles.push({
+            name: file.name,
+            content: `[EPUB File] ${chapters.length} chapters loaded`,
+            size: file.size,
+            lastModified: file.lastModified,
+            epubFile: file,
+            epubChapters: chapters,
+            isEpub: true,
+          });
+        } catch (error) {
+          addLog('error', `EPUB 파싱 실패: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else if (mode === 'text') {
+        try {
+          const content = await file.text();
+          textFiles.push({
+            name: file.name,
+            content,
+            size: file.size,
+            lastModified: file.lastModified,
+          });
+        } catch (error) {
+          console.error(`파일 읽기 실패: ${file.name}`, error);
+        }
       }
     }
     
     if (textFiles.length > 0 && !snapshotFound) {
       addInputFiles(textFiles);
     }
-  }, [addInputFiles, addLog, onImportSnapshot]);
+  }, [addInputFiles, addLog, mode, onImportSnapshot, onEpubChaptersChange, onModeChange]);
 
   const handleFileRemove = useCallback((index: number) => {
     removeInputFile(index);
-  }, [removeInputFile]);
+    onEpubChaptersChange([]);
+  }, [removeInputFile, onEpubChaptersChange]);
 
   const handleClearAll = useCallback(() => {
     clearInputFiles();
-  }, [clearInputFiles]);
+    onEpubChaptersChange([]);
+  }, [clearInputFiles, onEpubChaptersChange]);
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
@@ -77,17 +110,37 @@ function FileUploadSection({ onImportSnapshot }: { onImportSnapshot: (file: File
       </h2>
       
       <FileUpload
-        accept={['.txt', '.json']}
-        multiple={true}
-        maxSize={50 * 1024 * 1024}
+        accept={mode === 'epub' ? ['.epub'] : ['.txt', '.json']}
+        multiple={mode === 'text'}
+        maxSize={mode === 'epub' ? 100 * 1024 * 1024 : 50 * 1024 * 1024}
         onFilesSelected={handleFilesSelected}
         selectedFiles={inputFiles}
         onFileRemove={handleFileRemove}
         height="h-32"
       />
       <p className="text-xs text-gray-500 mt-2 ml-1">
-        * 텍스트 파일(.txt)을 업로드하여 새 작업을 시작하거나, 작업 파일(.json)을 업로드하여 이어서 진행할 수 있습니다.
+        {mode === 'epub' 
+          ? '* EPUB 파일(.epub)을 업로드하여 번역할 수 있습니다.'
+          : '* 텍스트 파일(.txt)을 업로드하여 새 작업을 시작하거나, 작업 파일(.json)을 업로드하여 이어서 진행할 수 있습니다.'}
       </p>
+
+      {/* EPUB 챕터 정보 */}
+      {epubChapters.length > 0 && (
+        <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm font-semibold text-blue-900 mb-2">
+            📚 로드된 EPUB: {epubChapters.length}개 챕터
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {epubChapters.map((ch, idx) => (
+              <div key={idx} className="text-xs bg-white p-2 rounded border border-blue-100">
+                <div className="font-semibold text-blue-700">Chapter {idx + 1}</div>
+                <div className="text-gray-600 truncate">{ch.fileName}</div>
+                <div className="text-gray-500">{ch.nodes.length} nodes</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 전체 삭제 버튼 */}
       {inputFiles.length > 0 && (
@@ -213,6 +266,17 @@ function TranslationSettings() {
       setIsLoadingModels(true);
       try {
         const client = getGeminiClient();
+        
+        // API 키가 없으면 기본 모델만 사용
+        if (!process.env.REACT_APP_GEMINI_API_KEY && typeof window !== 'undefined' && !('__GENAI_API_KEY__' in window)) {
+          setModelOptions([
+            { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+            { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+            { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
+          ]);
+          return;
+        }
+        
         const models = await client.getAvailableModels();
         
         const options = models.map(model => ({
@@ -473,7 +537,7 @@ const PREVIEW_MAX_LENGTH = 3000;
  * 번역 결과 미리보기 컴포넌트
  * 대용량 텍스트 렌더링 시 브라우저 프리징 방지를 위해 일부만 보여줍니다.
  */
-function ResultPreview({ onExportSnapshot }: { onExportSnapshot: () => void }) {
+function ResultPreview({ onExportSnapshot, mode, epubChapters }: { onExportSnapshot: (mode: 'text' | 'epub', epubChapters?: any[]) => void; mode: 'text' | 'epub'; epubChapters?: any[] }) {
   const { translatedText, results } = useTranslationStore();
   const { downloadResult } = useTranslation();
 
@@ -495,33 +559,53 @@ function ResultPreview({ onExportSnapshot }: { onExportSnapshot: () => void }) {
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold text-gray-800">📄 번역 결과</h2>
+        <h2 className="text-xl font-semibold text-gray-800">
+          {mode === 'epub' ? '📚 EPUB 번역 상태' : '📄 번역 결과'}
+        </h2>
         <div className="flex gap-2">
-          {results.length > 0 && (
+          {mode !== 'epub' && results.length > 0 && (
             <Button
               variant="outline"
               size="sm"
               leftIcon={<FileJson className="w-4 h-4" />}
-              onClick={onExportSnapshot}
+              onClick={() => onExportSnapshot(mode, undefined)}
               title="현재 진행 상황을 파일로 저장하여 나중에 이어할 수 있습니다."
             >
               작업 저장
             </Button>
           )}
-          <Button
-            variant="primary"
-            size="sm"
-            leftIcon={<Download className="w-4 h-4" />}
-            onClick={() => downloadResult()}
-            disabled={!translatedText}
-          >
-            결과 다운로드
-          </Button>
+          {mode === 'epub' && results.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              leftIcon={<FileJson className="w-4 h-4" />}
+              onClick={() => onExportSnapshot(mode, epubChapters)}
+              title="EPUB 번역 진행 상황을 파일로 저장하여 나중에 이어할 수 있습니다."
+            >
+              작업 저장
+            </Button>
+          )}
+          {mode !== 'epub' && (
+            <Button
+              variant="primary"
+              size="sm"
+              leftIcon={<Download className="w-4 h-4" />}
+              onClick={() => downloadResult()}
+              disabled={!translatedText}
+            >
+              결과 다운로드
+            </Button>
+          )}
+          {mode === 'epub' && (
+            <div className="text-sm text-blue-600 bg-blue-50 px-3 py-2 rounded">
+              💾 번역 완료 시 자동으로 다운로드됩니다
+            </div>
+          )}
         </div>
       </div>
 
       {/* 결과 통계 */}
-      {results.length > 0 && (
+      {mode !== 'epub' && results.length > 0 && (
         <div className="flex gap-4 mb-3 text-sm">
           <span className="text-gray-600">
             총 {results.length}개 청크
@@ -537,7 +621,9 @@ function ResultPreview({ onExportSnapshot }: { onExportSnapshot: () => void }) {
         </div>
       )}
       
-      <div className="bg-gray-50 rounded-lg p-4 max-h-64 overflow-y-auto">
+      {mode !== 'epub' && (
+        <>
+        <div className="bg-gray-50 rounded-lg p-4 max-h-64 overflow-y-auto">
         <pre className="whitespace-pre-wrap text-sm text-gray-700">
           {previewText || '번역 결과가 여기에 표시됩니다...'}
         </pre>
@@ -551,6 +637,8 @@ function ResultPreview({ onExportSnapshot }: { onExportSnapshot: () => void }) {
           </span>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }
@@ -561,6 +649,8 @@ function ResultPreview({ onExportSnapshot }: { onExportSnapshot: () => void }) {
 export function TranslationPage() {
   const { config, exportConfig } = useSettingsStore();
   const { addLog } = useTranslationStore();
+  const [mode, setMode] = useState<'text' | 'epub'>('text');
+  const [epubChapters, setEpubChapters] = useState<any[]>([]);
   const {
     inputFiles,
     isRunning,
@@ -574,9 +664,56 @@ export function TranslationPage() {
     importSnapshot,
   } = useTranslation();
 
-  const handleStartTranslation = useCallback(() => {
-    executeTranslation();
-  }, [executeTranslation]);
+  const handleStartTranslation = useCallback(async () => {
+    // 모드에 따라 다른 처리
+    if (mode === 'epub') {
+      const epubFile: any = inputFiles[0];
+      if (epubFile && epubFile.isEpub && epubFile.epubFile) {
+        addLog('info', `📚 EPUB 번역 시작: ${epubFile.name}`);
+        
+        try {
+          // EPUB 번역 서비스 호출
+          const translationService = new TranslationService(config);
+          const translatedNodes = await translationService.translateEpubNodes(
+            epubFile.epubChapters.flatMap((ch: any) => ch.nodes),
+            [],
+            (progress: any) => {
+              addLog('info', `📊 진행률: ${progress.processedChunks}/${progress.totalChunks}`);
+            }
+          );
+
+          // EPUB 재조립 및 다운로드
+          const epubService = new EpubService();
+          let nodeIndex = 0;
+          const translatedChapters = epubFile.epubChapters.map((chapter: any) => ({
+            ...chapter,
+            nodes: translatedNodes.slice(
+              nodeIndex,
+              (nodeIndex += chapter.nodes.length)
+            ),
+          }));
+
+          const epubBlob = await epubService.generateEpubBlob(epubFile.epubFile, translatedChapters);
+          
+          // 다운로드
+          const url = URL.createObjectURL(epubBlob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `${epubFile.name.replace('.epub', '')}_translated.epub`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+
+          addLog('info', `✅ EPUB 번역 완료: ${link.download}`);
+        } catch (error) {
+          addLog('error', `❌ EPUB 번역 오류: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    } else {
+      executeTranslation();
+    }
+  }, [mode, inputFiles, executeTranslation, addLog, config]);
 
   const handleStopTranslation = useCallback(() => {
     cancelTranslation();
@@ -593,8 +730,55 @@ export function TranslationPage() {
 
   return (
     <div className="space-y-6 fade-in">
-      {/* 파일 업로드 (스냅샷 복구 기능 포함) */}
-      <FileUploadSection onImportSnapshot={importSnapshot} />
+      {/* 모드 선택 */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <Settings className="w-5 h-5" />
+          번역 모드 선택
+        </h2>
+        
+        <div className="flex gap-6">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="radio"
+              name="mode"
+              value="text"
+              checked={mode === 'text'}
+              onChange={(e) => setMode(e.target.value as 'text' | 'epub')}
+              className="w-4 h-4 accent-blue-600"
+            />
+            <span className="flex items-center gap-2 text-gray-700 font-medium">
+              📝 텍스트 번역
+            </span>
+            <span className="text-xs text-gray-500">(일반 텍스트 파일)</span>
+          </label>
+          
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="radio"
+              name="mode"
+              value="epub"
+              checked={mode === 'epub'}
+              onChange={(e) => setMode(e.target.value as 'text' | 'epub')}
+              className="w-4 h-4 accent-blue-600"
+            />
+            <span className="flex items-center gap-2 text-gray-700 font-medium">
+              <BookOpen className="w-4 h-4" />
+              EPUB 번역
+            </span>
+            <span className="text-xs text-gray-500">(전자책 파일)</span>
+          </label>
+        </div>
+        
+        {mode === 'epub' && (
+          <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+            💡 <strong>EPUB 모드</strong>에서는 전자책 파일을 업로드하면 자동으로 파싱되고, 번역 후 새로운 EPUB 파일로 다운로드됩니다.
+          </div>
+        )}
+      </div>
+      
+      {/* 파일 업로드 (모드에 따라 다른 UI) */}
+      <FileUploadSection onImportSnapshot={importSnapshot} mode={mode} onEpubChaptersChange={setEpubChapters} onModeChange={setMode} epubChapters={epubChapters} />
       
       {/* 번역 설정 */}
       <TranslationSettings />
@@ -606,7 +790,7 @@ export function TranslationPage() {
       <ProgressSection />
       
       {/* 번역 결과 (스냅샷 저장 버튼 포함) */}
-      <ResultPreview onExportSnapshot={exportSnapshot} />
+      <ResultPreview onExportSnapshot={exportSnapshot} mode={mode} epubChapters={epubChapters} />
       
       {/* 액션 버튼 */}
       <div className="flex gap-4">
@@ -620,7 +804,7 @@ export function TranslationPage() {
               leftIcon={<Play className="w-5 h-5" />}
               onClick={handleStartTranslation}
             >
-              번역 시작 {inputFiles.length > 0 && '(또는 이어하기)'}
+              {mode === 'epub' ? 'EPUB 번역 시작' : '번역 시작 (또는 이어하기)'}
             </Button>
             
             {hasFailedChunks && (

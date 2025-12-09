@@ -17,24 +17,24 @@ import { Button, IconButton, Input, Select, Checkbox, ConfirmDialog, ProgressBar
  * 용어집 통계 컴포넌트
  */
 function GlossaryStats() {
-  const stats = useGlossaryStore((state) => ({
-    totalEntries: state.entries.length,
-    selectedCount: state.selectedEntries.size,
-    totalOccurrences: state.entries.reduce((sum, e) => sum + e.occurrenceCount, 0),
-  }));
+  const totalEntries = useGlossaryStore((state) => state.entries.length);
+  const selectedCount = useGlossaryStore((state) => state.selectedEntries.size);
+  const totalOccurrences = useGlossaryStore((state) =>
+    state.entries.reduce((sum, e) => sum + e.occurrenceCount, 0)
+  );
 
   return (
     <div className="grid grid-cols-3 gap-4 mb-6">
       <div className="bg-primary-50 rounded-lg p-4 text-center">
-        <div className="text-2xl font-bold text-primary-600">{stats.totalEntries}</div>
+        <div className="text-2xl font-bold text-primary-600">{totalEntries}</div>
         <div className="text-sm text-primary-700">총 항목</div>
       </div>
       <div className="bg-green-50 rounded-lg p-4 text-center">
-        <div className="text-2xl font-bold text-green-600">{stats.totalOccurrences}</div>
+        <div className="text-2xl font-bold text-green-600">{totalOccurrences}</div>
         <div className="text-sm text-green-700">총 등장 횟수</div>
       </div>
       <div className="bg-purple-50 rounded-lg p-4 text-center">
-        <div className="text-2xl font-bold text-purple-600">{stats.selectedCount}</div>
+        <div className="text-2xl font-bold text-purple-600">{selectedCount}</div>
         <div className="text-sm text-purple-700">선택됨</div>
       </div>
     </div>

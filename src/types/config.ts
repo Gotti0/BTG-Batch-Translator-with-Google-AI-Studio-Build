@@ -24,6 +24,10 @@ export interface AppConfig {
   requestsPerMinute: number;
   maxWorkers: number;
   
+  // EPUB 청크 설정
+  epubChunkSize: number;
+  epubMaxNodesPerChunk: number;
+  
   // 언어 설정
   novelLanguage: string;
   novelLanguageFallback: string;
@@ -36,9 +40,9 @@ export interface AppConfig {
   prefillSystemInstruction: string;
   prefillCachedHistory: PrefillHistoryItem[];
   
-  // 콘텐츠 안전 설정
+  // 재시도 및 콘텐츠 안전 설정
+  maxRetryAttempts: number;  // 분할/재귀 재시도 최대 횟수 (EPUB, 콘텐츠 안전 공통)
   useContentSafetyRetry: boolean;
-  maxContentSafetySplitAttempts: number;
   minContentSafetyChunkSize: number;
   contentSafetySplitBySentences: boolean;
   
@@ -165,6 +169,10 @@ export const defaultConfig: AppConfig = {
   requestsPerMinute: 2,
   maxWorkers: 1,
   
+  // EPUB 청크 설정
+  epubChunkSize: 5000,
+  epubMaxNodesPerChunk: 30,
+  
   // 언어 설정
   novelLanguage: 'auto',
   novelLanguageFallback: 'zh',
@@ -177,9 +185,9 @@ export const defaultConfig: AppConfig = {
   prefillSystemInstruction: DEFAULT_PREFILL_SYSTEM_INSTRUCTION,
   prefillCachedHistory: DEFAULT_PREFILL_CACHED_HISTORY,
   
-  // 콘텐츠 안전 설정
+  // 재시도 및 콘텐츠 안전 설정
+  maxRetryAttempts: 5,  // 분할/재귀 재시도 최대 횟수
   useContentSafetyRetry: true,
-  maxContentSafetySplitAttempts: 5,
   minContentSafetyChunkSize: 100,
   contentSafetySplitBySentences: true,
   
