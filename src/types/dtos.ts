@@ -144,6 +144,23 @@ export interface TranslationSnapshot {
     chunk_size: number;
     model_name: string;
     prompt_template?: string;
+    // 추가 설정 파라미터
+    temperature?: number;
+    requests_per_minute?: number;
+    max_workers?: number;
+    
+    // 프리필 설정
+    enable_prefill_translation?: boolean;
+    prefill_system_instruction?: string;
+    prefill_cached_history?: any[]; // PrefillHistoryItem[]
+
+    // 용어집 설정
+    enable_dynamic_glossary_injection?: boolean;
+    max_glossary_entries_per_chunk_injection?: number;
+    max_glossary_chars_per_chunk_injection?: number;
+
+    // EPUB 설정
+    enable_image_annotation?: boolean;
   };
   // Phase 5: 번역 모드 (text 또는 epub)
   mode?: 'text' | 'epub';

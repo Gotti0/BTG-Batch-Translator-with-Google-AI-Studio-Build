@@ -323,6 +323,21 @@ export function useTranslation() {
         chunk_size: config.chunkSize,
         model_name: config.modelName,
         prompt_template: config.prompts,
+        
+        // 추가 설정 저장
+        temperature: config.temperature,
+        requests_per_minute: config.requestsPerMinute,
+        max_workers: config.maxWorkers,
+        
+        enable_prefill_translation: config.enablePrefillTranslation,
+        prefill_system_instruction: config.prefillSystemInstruction,
+        prefill_cached_history: config.prefillCachedHistory,
+        
+        enable_dynamic_glossary_injection: config.enableDynamicGlossaryInjection,
+        max_glossary_entries_per_chunk_injection: config.maxGlossaryEntriesPerChunkInjection,
+        max_glossary_chars_per_chunk_injection: config.maxGlossaryCharsPerChunkInjection,
+        
+        enable_image_annotation: config.enableImageAnnotation,
       },
       // Phase 5: 번역 모드 추가
       mode: mode,
@@ -430,6 +445,21 @@ export function useTranslation() {
         chunkSize: snapshot.config.chunk_size,
         modelName: snapshot.config.model_name || config.modelName,
         prompts: snapshot.config.prompt_template || config.prompts,
+        
+        // 추가 설정 복구 (값이 있는 경우에만)
+        temperature: snapshot.config.temperature ?? config.temperature,
+        requestsPerMinute: snapshot.config.requests_per_minute ?? config.requestsPerMinute,
+        maxWorkers: snapshot.config.max_workers ?? config.maxWorkers,
+        
+        enablePrefillTranslation: snapshot.config.enable_prefill_translation ?? config.enablePrefillTranslation,
+        prefillSystemInstruction: snapshot.config.prefill_system_instruction ?? config.prefillSystemInstruction,
+        prefillCachedHistory: snapshot.config.prefill_cached_history ?? config.prefillCachedHistory,
+        
+        enableDynamicGlossaryInjection: snapshot.config.enable_dynamic_glossary_injection ?? config.enableDynamicGlossaryInjection,
+        maxGlossaryEntriesPerChunkInjection: snapshot.config.max_glossary_entries_per_chunk_injection ?? config.maxGlossaryEntriesPerChunkInjection,
+        maxGlossaryCharsPerChunkInjection: snapshot.config.max_glossary_chars_per_chunk_injection ?? config.maxGlossaryCharsPerChunkInjection,
+        
+        enableImageAnnotation: snapshot.config.enable_image_annotation ?? config.enableImageAnnotation,
       });
 
       addLog('info', `설정이 복구되었습니다. (청크 크기: ${snapshot.config.chunk_size})`);
