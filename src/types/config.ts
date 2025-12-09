@@ -165,8 +165,8 @@ export const defaultConfig: AppConfig = {
   
   // 처리 설정
   chunkSize: 10000,
-  requestsPerMinute: 2,
-  maxWorkers: 1,
+  requestsPerMinute: 10,
+  maxWorkers: 4,
   
   // EPUB 청크 설정
   epubMaxNodesPerChunk: 50,
