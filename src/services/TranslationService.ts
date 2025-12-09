@@ -800,7 +800,7 @@ export class TranslationService {
   }
 
   /**
-   * EPUB 노드 배치 번역 (실제 API 호출)
+   * EPUB 노드 배치 번역 (통합된 프롬프트 및 프리필 적용 버전)
    * 
    * @param nodes 번역할 노드 배열 (type='text'인 항목만)
    * @param glossaryEntries 용어집 (선택사항)
@@ -817,33 +817,23 @@ export class TranslationService {
       return nodes; // 텍스트 노드 없음 → 원본 반환
     }
 
-    // 2. 요청 데이터 구성
+    // 2. 요청 데이터 구성 (JSON 변환)
     const requestData = textNodes.map((n) => ({
       id: n.id,
       text: n.content,
     }));
+    
+    // 텍스트 노드들을 JSON 문자열로 직렬화 (이것이 {{slot}}에 들어감)
+    const jsonString = JSON.stringify(requestData, null, 2);
 
     // 3. 프롬프트 구성
-    const glossaryContext = glossaryEntries
-      ? formatGlossaryForPrompt(glossaryEntries, textNodes.map(n => n.content).join(' '))
-      : '용어집 없음';
+    // 사용자 설정 프롬프트 템플릿 사용 (용어집 자동 주입 포함)
+    const prompt = this.constructPrompt(jsonString, 0);
 
-    const prompt = `
-다음 텍스트 배열을 지정된 대상 언어로 번역하세요.
-
-**용어집 (필요시 참고):**
-${glossaryContext}
-
-**번역 대상 텍스트:**
-${JSON.stringify(requestData, null, 2)}
-
-**응답 형식:**
-JSON 배열로, 각 항목은 { id, translated_text } 형태입니다.
-원본 텍스트의 의미를 정확히 전달하는 자연스러운 번역을 제공하세요.
-`;
-
-    // 4. JSON Schema 기반 API 호출
+    // 4. JSON Schema 설정 (구조화된 출력 강제)
     const config: GenerationConfig = {
+      temperature: this.config.temperature,
+      topP: this.config.topP,
       responseMimeType: 'application/json',
       responseJsonSchema: {
         type: 'ARRAY',
@@ -859,23 +849,42 @@ JSON 배열로, 각 항목은 { id, translated_text } 형태입니다.
     };
 
     try {
-      // 실제 API 호출
-      const response = await this.geminiClient.generateText(
-        prompt,
-        this.config.modelName,
-        undefined,
-        config
-      );
+      let responseText: string;
 
-      // 5. 응답 파싱
-      const translations: Array<{ id: string; translated_text: string }> = JSON.parse(response);
+      // 5. API 호출 (Prefill 설정 적용)
+      if (this.config.enablePrefillTranslation) {
+        // 채팅 모드 (프리필 히스토리 주입)
+        const chatHistory = this.config.prefillCachedHistory.map(item => ({
+          role: item.role,
+          content: item.parts.join('\n'),
+        }));
+        
+        responseText = await this.geminiClient.generateWithChat(
+          prompt,
+          this.config.prefillSystemInstruction,
+          chatHistory,
+          this.config.modelName,
+          config
+        );
+      } else {
+        // 일반 모드
+        responseText = await this.geminiClient.generateText(
+          prompt,
+          this.config.modelName,
+          this.config.prefillSystemInstruction,
+          config
+        );
+      }
 
-      // 6. ID 기준 매핑
+      // 6. 응답 파싱 및 적용
+      const translations: Array<{ id: string; translated_text: string }> = JSON.parse(responseText);
+
+      // ID 기준 매핑
       const translationMap = new Map(
         translations.map((t) => [t.id, t.translated_text])
       );
 
-      // 7. 원본 노드에 번역 결과 병합
+      // 원본 노드에 번역 결과 병합
       return nodes.map((node) => {
         if (node.type === 'text' && translationMap.has(node.id)) {
           return {
@@ -883,10 +892,11 @@ JSON 배열로, 각 항목은 { id, translated_text } 형태입니다.
             content: translationMap.get(node.id),
           };
         }
-        return node; // 번역 없는 노드는 그대로 반환
+        return node;
       });
+
     } catch (error) {
-      this.log('error', `❌ EPUB 청크 번역 API 호출 실패: ${error instanceof Error ? error.message : String(error)}`);
+      this.log('error', `❌ EPUB 청크 번역 실패: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
   }
