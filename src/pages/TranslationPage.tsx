@@ -2,7 +2,7 @@
 // 설정 및 번역 페이지
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { Play, Square, Save, Upload, Settings, Zap, Download, RefreshCw, RotateCcw, FileJson, BookOpen } from 'lucide-react';
+import { Play, Square, Save, Upload, Settings, Zap, Download, RefreshCw, RotateCcw, FileJson, BookOpen, CheckCircle } from 'lucide-react';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTranslationStore } from '../stores/translationStore';
 import { useTranslation } from '../hooks/useTranslation';
@@ -538,9 +538,8 @@ const PREVIEW_MAX_LENGTH = 3000;
  * 번역 결과 미리보기 컴포넌트
  * 대용량 텍스트 렌더링 시 브라우저 프리징 방지를 위해 일부만 보여줍니다.
  */
-function ResultPreview({ onExportSnapshot, mode, epubChapters }: { onExportSnapshot: (mode: 'text' | 'epub', epubChapters?: any[]) => void; mode: 'text' | 'epub'; epubChapters?: any[] }) {
+function ResultPreview({ mode }: { mode: 'text' | 'epub' }) {
   const { translatedText, results } = useTranslationStore();
-  const { downloadResult } = useTranslation();
 
   // [FIX] useMemo를 조건부 반환문(early return) 이전에 호출하여 Hook 규칙 준수
   // 텍스트 미리보기 계산 (메모이제이션)
@@ -553,60 +552,15 @@ function ResultPreview({ onExportSnapshot, mode, epubChapters }: { onExportSnaps
   }, [translatedText]);
 
   if (!translatedText && results.length === 0) return null;
+  if (mode === 'epub') return null;
 
   const successCount = results.filter((r: { success: boolean }) => r.success).length;
   const failCount = results.filter((r: { success: boolean }) => !r.success).length;
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold text-gray-800">
-          {mode === 'epub' ? '📚 EPUB 번역 상태' : '📄 번역 결과'}
-        </h2>
-        <div className="flex gap-2">
-          {mode !== 'epub' && results.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              leftIcon={<FileJson className="w-4 h-4" />}
-              onClick={() => onExportSnapshot(mode, undefined)}
-              title="현재 진행 상황을 파일로 저장하여 나중에 이어할 수 있습니다."
-            >
-              작업 저장
-            </Button>
-          )}
-          {mode === 'epub' && results.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              leftIcon={<FileJson className="w-4 h-4" />}
-              onClick={() => onExportSnapshot(mode, epubChapters)}
-              title="EPUB 번역 진행 상황을 파일로 저장하여 나중에 이어할 수 있습니다."
-            >
-              작업 저장
-            </Button>
-          )}
-          {mode !== 'epub' && (
-            <Button
-              variant="primary"
-              size="sm"
-              leftIcon={<Download className="w-4 h-4" />}
-              onClick={() => downloadResult()}
-              disabled={!translatedText}
-            >
-              결과 다운로드
-            </Button>
-          )}
-          {mode === 'epub' && (
-            <div className="text-sm text-blue-600 bg-blue-50 px-3 py-2 rounded">
-              💾 번역 완료 시 자동으로 다운로드됩니다
-            </div>
-          )}
-        </div>
-      </div>
-
+    <>
       {/* 결과 통계 */}
-      {mode !== 'epub' && results.length > 0 && (
+      {results.length > 0 && (
         <div className="flex gap-4 mb-3 text-sm">
           <span className="text-gray-600">
             총 {results.length}개 청크
@@ -622,9 +576,7 @@ function ResultPreview({ onExportSnapshot, mode, epubChapters }: { onExportSnaps
         </div>
       )}
       
-      {mode !== 'epub' && (
-        <>
-        <div className="bg-gray-50 rounded-lg p-4 max-h-64 overflow-y-auto">
+      <div className="bg-gray-50 rounded-lg p-4 max-h-64 overflow-y-auto">
         <pre className="whitespace-pre-wrap text-sm text-gray-700">
           {previewText || '번역 결과가 여기에 표시됩니다...'}
         </pre>
@@ -638,9 +590,7 @@ function ResultPreview({ onExportSnapshot, mode, epubChapters }: { onExportSnaps
           </span>
         )}
       </div>
-        </>
-      )}
-    </div>
+    </>
   );
 }
 
@@ -649,9 +599,15 @@ function ResultPreview({ onExportSnapshot, mode, epubChapters }: { onExportSnaps
  */
 export function TranslationPage() {
   const { config, exportConfig } = useSettingsStore();
-  const { addLog } = useTranslationStore();
+  const { addLog, results, translatedText } = useTranslationStore();
   const [mode, setMode] = useState<'text' | 'epub'>('text');
   const [epubChapters, setEpubChapters] = useState<any[]>([]);
+  
+  // [추가] 번역된 EPUB 다운로드 URL 및 파일명 관리
+  const [epubDownloadUrl, setEpubDownloadUrl] = useState<string | null>(null);
+  const [epubDownloadName, setEpubDownloadName] = useState<string>('');
+  const [isEpubTranslating, setIsEpubTranslating] = useState(false);
+
   const {
     inputFiles,
     isRunning,
@@ -663,39 +619,50 @@ export function TranslationPage() {
     retryFailedChunks,
     exportSnapshot,
     importSnapshot,
+    downloadResult,
   } = useTranslation();
 
   const handleStartTranslation = useCallback(async () => {
-    // 모드에 따라 다른 처리
+    // [개선 1] 시작 시 이전 완료 상태 초기화
+    setEpubDownloadUrl(null);
+    setEpubDownloadName('');
+
     if (mode === 'epub') {
+      setIsEpubTranslating(true);
       const epubFile: any = inputFiles[0];
       if (epubFile && epubFile.isEpub && epubFile.epubFile) {
-        addLog('info', `📚 EPUB 번역 시작: ${epubFile.name}`);
+        // [개선 2] 명확한 시작 로그
+        addLog('info', `🚀 [단계 1/4] EPUB 번역 작업을 시작합니다: ${epubFile.name}`);
         
         try {
-          // EPUB 번역 서비스 호출
           const translationService = new TranslationService(config);
           
-          // 이미지 주석 생성을 위한 ZIP 로드
+          // 이미지 주석 처리 준비
           let zip: JSZip | undefined;
           if (config.enableImageAnnotation) {
+            addLog('info', '🖼️ 이미지 주석 생성을 위해 EPUB 이미지를 로드합니다.');
             try {
               zip = await JSZip.loadAsync(epubFile.epubFile);
             } catch (e) {
-              addLog('warning', '이미지 주석 생성을 위한 EPUB 파일 로드 실패');
+              addLog('warning', '이미지 로드 실패. 주석 생성 없이 진행합니다.');
             }
           }
 
+          addLog('info', `📖 [단계 2/4] 텍스트 번역을 시작합니다. (청크 크기: ${config.chunkSize})`);
+
           const translatedNodes = await translationService.translateEpubNodes(
             epubFile.epubChapters.flatMap((ch: any) => ch.nodes),
-            [],
+            [], // 용어집이 있다면 여기에 전달
             (progress: any) => {
-              addLog('info', `📊 진행률: ${progress.processedChunks}/${progress.totalChunks}`);
+              // 진행률 로그는 너무 빈번할 수 있으므로 필요 시 주석 처리하거나 빈도 조절
+              // addLog('debug', `진행률: ${progress.processedChunks}/${progress.totalChunks}`);
             },
             zip
           );
 
-          // EPUB 재조립 및 다운로드
+          addLog('info', '📚 [단계 3/4] 번역된 데이터를 EPUB 포맷으로 재조립합니다.');
+
+          // EPUB 재조립
           const epubService = new EpubService();
           let nodeIndex = 0;
           const translatedChapters = epubFile.epubChapters.map((chapter: any) => ({
@@ -708,20 +675,22 @@ export function TranslationPage() {
 
           const epubBlob = await epubService.generateEpubBlob(epubFile.epubFile, translatedChapters);
           
-          // 다운로드
+          // [개선 3] 자동 다운로드 대신 URL 생성 및 상태 저장
           const url = URL.createObjectURL(epubBlob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `${epubFile.name.replace('.epub', '')}_translated.epub`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          URL.revokeObjectURL(url);
+          const downloadName = `${epubFile.name.replace('.epub', '')}_translated.epub`;
+          
+          setEpubDownloadUrl(url);
+          setEpubDownloadName(downloadName);
 
-          addLog('info', `✅ EPUB 번역 완료: ${link.download}`);
+          addLog('info', `✅ [단계 4/4] 모든 작업이 완료되었습니다! 아래 '결과 다운로드' 버튼을 눌러 파일을 저장하세요.`);
+
         } catch (error) {
-          addLog('error', `❌ EPUB 번역 오류: ${error instanceof Error ? error.message : String(error)}`);
+          addLog('error', `❌ 작업 실패: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+          setIsEpubTranslating(false);
         }
+      } else {
+        setIsEpubTranslating(false);
       }
     } else {
       executeTranslation();
@@ -802,8 +771,79 @@ export function TranslationPage() {
       {/* 진행률 */}
       <ProgressSection />
       
-      {/* 번역 결과 (스냅샷 저장 버튼 포함) */}
-      <ResultPreview onExportSnapshot={exportSnapshot} mode={mode} epubChapters={epubChapters} />
+      {/* [개선 4] 결과 미리보기 및 다운로드 영역 개선 */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold text-gray-800">
+            {mode === 'epub' ? '📚 EPUB 작업 결과' : '📄 번역 결과'}
+          </h2>
+          <div className="flex gap-2">
+            {mode !== 'epub' && results.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                leftIcon={<FileJson className="w-4 h-4" />}
+                onClick={() => exportSnapshot(mode, undefined)}
+                title="현재 진행 상황을 파일로 저장하여 나중에 이어할 수 있습니다."
+              >
+                작업 저장
+              </Button>
+            )}
+            {mode === 'epub' && results.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                leftIcon={<FileJson className="w-4 h-4" />}
+                onClick={() => exportSnapshot(mode, epubChapters)}
+                title="EPUB 번역 진행 상황을 파일로 저장하여 나중에 이어할 수 있습니다."
+              >
+                작업 저장
+              </Button>
+            )}
+            {mode !== 'epub' && (
+              <Button
+                variant="primary"
+                size="sm"
+                leftIcon={<Download className="w-4 h-4" />}
+                onClick={() => downloadResult()}
+                disabled={!translatedText}
+              >
+                결과 다운로드
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {mode === 'epub' ? (
+          <div className="text-center py-8">
+            {epubDownloadUrl ? (
+              <div className="space-y-4 animate-fadeIn">
+                <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto">
+                  <CheckCircle className="w-8 h-8" />
+                </div>
+                <h3 className="text-lg font-medium text-gray-900">번역이 완료되었습니다!</h3>
+                <p className="text-gray-500">파일이 준비되었습니다. 아래 버튼을 눌러 저장하세요.</p>
+                
+                <a 
+                  href={epubDownloadUrl} 
+                  download={epubDownloadName}
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium shadow-sm"
+                >
+                  <Download className="w-5 h-5" />
+                  {epubDownloadName} 다운로드
+                </a>
+              </div>
+            ) : (
+              <p className="text-gray-500">
+                {isRunning || isEpubTranslating ? 'EPUB 번역이 진행 중입니다... 로그 탭을 확인하세요.' : '번역을 시작하면 결과가 여기에 표시됩니다.'}
+              </p>
+            )}
+          </div>
+        ) : (
+          /* 기존 텍스트 모드 미리보기 (ResultPreview 컴포넌트 내용) */
+          <ResultPreview mode={mode} />
+        )}
+      </div>
       
       {/* 액션 버튼 */}
       <div className="flex gap-4">
@@ -813,7 +853,8 @@ export function TranslationPage() {
               variant="primary"
               size="lg"
               className="flex-1"
-              disabled={!canStart}
+              disabled={!canStart || isEpubTranslating}
+              loading={isEpubTranslating}
               leftIcon={<Play className="w-5 h-5" />}
               onClick={handleStartTranslation}
             >
