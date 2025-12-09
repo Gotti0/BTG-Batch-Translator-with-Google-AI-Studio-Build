@@ -1,3 +1,4 @@
+
 // services/GlossaryService.ts
 // Python domain/glossary_service.py 의 TypeScript 변환
 // 텍스트에서 용어집 항목을 AI로 추출하고 관리하는 서비스
@@ -178,6 +179,11 @@ ${segmentText}
 
     try {
       // [핵심 변경] responseJsonSchema를 사용하여 구조화된 출력 요청
+      const rawSchema = zodToJsonSchema(glossaryResponseSchema);
+      
+      // Gemini API 호환성을 위해 $schema 제거 (INVALID_ARGUMENT 방지)
+      const { $schema, ...jsonSchema } = rawSchema as any;
+
       const responseText = await this.geminiClient.generateText(
         prompt,
         this.config.modelName,
@@ -186,8 +192,7 @@ ${segmentText}
           temperature: this.config.glossaryExtractionTemperature || 0.1, // 구조화된 출력은 낮은 온도가 유리함
           maxOutputTokens: 8192,
           responseMimeType: "application/json", // 필수 설정
-          // [Fix] Cast schema to any to resolve type mismatch with zod-to-json-schema
-          responseJsonSchema: zodToJsonSchema(glossaryResponseSchema as any), // Zod 스키마 변환 전달
+          responseJsonSchema: jsonSchema, // 정제된 스키마 전달
         }
       );
 
@@ -220,7 +225,6 @@ ${segmentText}
 
       // Zod 파싱 에러 처리
       if (error instanceof z.ZodError) {
-        // [Fix] Use error.issues instead of error.errors
         this.log('error', `스키마 검증 실패: ${JSON.stringify(error.issues)}`);
       } else if (error instanceof GeminiApiException) {
         this.log('error', `용어집 추출 API 오류: ${error.message}`);

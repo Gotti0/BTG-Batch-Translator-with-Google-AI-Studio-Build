@@ -1,3 +1,4 @@
+
 // hooks/useGlossary.ts
 // 용어집 기능을 위한 커스텀 훅
 
@@ -69,7 +70,26 @@ export function useGlossary() {
         addLog('warning', '분석할 텍스트가 없습니다. 파일을 업로드하거나 텍스트를 입력하세요.');
         return;
       }
-      textToAnalyze = inputFiles.map(f => f.content).join('\n\n');
+
+      // [수정] EPUB 파일인 경우 챕터 데이터에서 텍스트 추출, 일반 파일은 content 사용
+      const extractedTexts = inputFiles.map(f => {
+        if (f.isEpub && f.epubChapters && f.epubChapters.length > 0) {
+          // EPUB 챕터 노드에서 텍스트만 추출하여 병합
+          return f.epubChapters
+            .flatMap((ch: any) => ch.nodes)
+            .filter((n: any) => n.type === 'text' && n.content)
+            .map((n: any) => n.content)
+            .join('\n');
+        }
+        return f.content;
+      });
+
+      textToAnalyze = extractedTexts.join('\n\n');
+
+      if (!textToAnalyze.trim()) {
+        addLog('warning', '분석할 텍스트 내용이 비어있습니다 (EPUB 파일이 로드되지 않았거나 텍스트가 없음).');
+        return;
+      }
     }
 
     isExtractingRef.current = true;
