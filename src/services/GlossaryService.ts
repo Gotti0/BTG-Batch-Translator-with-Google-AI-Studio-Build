@@ -8,6 +8,7 @@ import { GeminiClient, GeminiApiException } from './GeminiClient';
 import { ChunkService } from './ChunkService';
 import type { GlossaryEntry, GlossaryExtractionProgress, LogEntry } from '../types/dtos';
 import type { AppConfig } from '../types/config';
+import type { EpubNode } from '../types/epub';
 
 /**
  * 로그 콜백 타입
@@ -487,6 +488,46 @@ ${segmentText}
 
     this.log('info', `용어집 추출 완료. 최종 ${finalEntries.length}개 항목.`);
     return finalEntries;
+  }
+
+  /**
+   * EPUB 노드에서 용어집 추출 (병렬 처리 지원)
+   * 
+   * @param nodes - 분석할 EPUB 노드 배열
+   * @param progressCallback - 진행률 콜백
+   * @param seedEntries - 기존 시드 용어집 항목
+   * @param userOverridePrompt - 사용자 정의 프롬프트
+   * @param stopCheck - 중지 확인 콜백
+   * @returns 추출된 용어집 항목 목록
+   */
+  async extractGlossaryFromEpub(
+    nodes: EpubNode[],
+    progressCallback?: GlossaryProgressCallback,
+    seedEntries?: GlossaryEntry[],
+    userOverridePrompt?: string,
+    stopCheck?: StopCheckCallback
+  ): Promise<GlossaryEntry[]> {
+    // 1. 텍스트 노드만 추출하여 하나의 문자열로 병합
+    // (단, 너무 길어지면 안되므로 적절히 처리해야 하지만, 
+    //  기존 extractGlossary가 텍스트를 받아 청크로 나누므로 여기서는 텍스트만 모아서 넘겨도 됨)
+    //  하지만 EPUB은 챕터별로 나뉘어 있을 수 있으므로, 
+    //  단순 병합보다는 의미 단위(문단)로 줄바꿈하여 합치는 것이 좋음.
+    
+    const textContent = nodes
+      .filter(n => n.type === 'text' && n.content && n.content.trim().length > 0)
+      .map(n => n.content)
+      .join('\n\n');
+
+    this.log('info', `EPUB 노드에서 텍스트 추출 완료 (${textContent.length}자)`);
+
+    // 2. 기존 텍스트 기반 추출 메서드 재사용
+    return this.extractGlossary(
+      textContent,
+      progressCallback,
+      seedEntries,
+      userOverridePrompt,
+      stopCheck
+    );
   }
 
   /**

@@ -728,6 +728,7 @@ export class TranslationService {
     glossaryEntries?: GlossaryEntry[],
     onProgress?: ProgressCallback
   ): Promise<EpubNode[]> {
+    this.resetStop();
     this.log('info', `🚀 EPUB 번역 시작: ${nodes.length}개 노드`);
 
     try {
@@ -740,54 +741,105 @@ export class TranslationService {
       const chunks = epubChunkService.splitEpubNodesIntoChunks(nodes);
       this.log('info', `📦 ${chunks.length}개 청크로 분할 완료`);
 
-      // 2. 각 청크별 번역
-      const translatedNodes: EpubNode[] = [];
+      // 2. 병렬 처리 준비
+      const maxWorkers = this.config.maxWorkers || 1;
+      const processingPromises = new Set<Promise<void>>();
+      const chunkResults = new Map<number, EpubNode[]>();
+      const startTime = Date.now();
+
       let processedChunks = 0;
+      let successfulChunks = 0;
       let failedChunks = 0;
 
+      // 초기 진행률 보고
+      if (onProgress) {
+        onProgress({
+          totalChunks: chunks.length,
+          processedChunks: 0,
+          successfulChunks: 0,
+          failedChunks: 0,
+          currentStatusMessage: 'EPUB 번역 시작...',
+          etaSeconds: 0,
+        });
+      }
+
+      // 3. 각 청크별 번역 (병렬 처리)
       for (let i = 0; i < chunks.length; i++) {
-        try {
-          const translated = await this.translateEpubChunk(
-            chunks[i],
-            glossaryEntries
-          );
-          translatedNodes.push(...translated);
-          processedChunks++;
+        // 중단 체크
+        if (this.stopRequested) {
+          this.log('warning', '번역이 사용자에 의해 중단되었습니다.');
+          break;
+        }
 
-          // 진행률 업데이트
-          if (onProgress) {
-            onProgress({
-              totalChunks: chunks.length,
-              processedChunks,
-              successfulChunks: processedChunks,
-              failedChunks,
-              currentStatusMessage: `청크 ${i + 1}/${chunks.length} 번역 완료`,
-            });
+        const task = (async () => {
+          if (this.stopRequested) return;
+
+          try {
+            const translated = await this.translateEpubChunk(
+              chunks[i],
+              glossaryEntries
+            );
+            chunkResults.set(i, translated);
+            successfulChunks++;
+            this.log('info', `✅ 청크 ${i + 1}/${chunks.length} 완료`);
+          } catch (error) {
+            this.log('warning', `⚠️ 청크 ${i + 1}번 번역 실패. 분할 정복 시작...`);
+
+            // 오류 발생 시 재귀 분할 정복
+            const retriedNodes = await this.retryEpubNodesWithSmallerBatches(
+              chunks[i],
+              i,
+              glossaryEntries,
+              1
+            );
+            chunkResults.set(i, retriedNodes);
+            failedChunks++;
+          } finally {
+            processedChunks++;
+            
+            // 진행률 및 ETA 업데이트
+            if (onProgress) {
+              const now = Date.now();
+              const elapsedSeconds = (now - startTime) / 1000;
+              let etaSeconds = 0;
+              if (processedChunks > 0) {
+                const avgTimePerChunk = elapsedSeconds / processedChunks;
+                const remainingChunks = chunks.length - processedChunks;
+                etaSeconds = Math.ceil(avgTimePerChunk * remainingChunks);
+              }
+
+              onProgress({
+                totalChunks: chunks.length,
+                processedChunks,
+                successfulChunks,
+                failedChunks,
+                currentStatusMessage: `청크 ${processedChunks}/${chunks.length} 처리 완료`,
+                etaSeconds,
+              });
+            }
           }
+        })();
 
-          this.log('info', `✅ 청크 ${i + 1}/${chunks.length} 완료`);
-        } catch (error) {
-          this.log('warning', `⚠️ 청크 ${i}번 번역 실패. 분할 정복 시작...`);
+        processingPromises.add(task);
+        task.then(() => processingPromises.delete(task));
 
-          // 오류 발생 시 재귀 분할 정복
-          const retriedNodes = await this.retryEpubNodesWithSmallerBatches(
-            chunks[i],
-            i,
-            glossaryEntries,
-            1
-          );
-          translatedNodes.push(...retriedNodes);
-          failedChunks++;
+        // 최대 워커 수 도달 시 대기
+        if (processingPromises.size >= maxWorkers) {
+          await Promise.race(processingPromises);
+        }
+      }
 
-          if (onProgress) {
-            onProgress({
-              totalChunks: chunks.length,
-              processedChunks: i + 1,
-              successfulChunks: processedChunks,
-              failedChunks,
-              currentStatusMessage: `청크 ${i + 1}/${chunks.length} 재시도 완료`,
-            });
-          }
+      // 남은 작업 완료 대기
+      await Promise.all(processingPromises);
+
+      // 4. 결과 조합 (순서 보장)
+      const translatedNodes: EpubNode[] = [];
+      for (let i = 0; i < chunks.length; i++) {
+        if (chunkResults.has(i)) {
+          translatedNodes.push(...chunkResults.get(i)!);
+        } else {
+          // 처리되지 않은 청크(중단됨 등)는 원본 유지
+          translatedNodes.push(...chunks[i]);
         }
       }
 
