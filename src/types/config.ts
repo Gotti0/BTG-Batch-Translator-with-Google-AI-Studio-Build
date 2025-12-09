@@ -175,7 +175,7 @@ export const defaultConfig: AppConfig = {
   epubMaxNodesPerChunk: 50,
   
   // 이미지 주석 설정
-  enableImageAnnotation: true,
+  enableImageAnnotation: false,
   
   // 언어 설정
   novelLanguage: 'auto',
