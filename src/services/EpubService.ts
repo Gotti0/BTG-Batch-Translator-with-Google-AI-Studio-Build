@@ -10,7 +10,6 @@
  */
 
 import JSZip from 'jszip';
-import { v4 as uuidv4 } from 'uuid';
 import {
   EpubNode,
   EpubChapter,
@@ -68,7 +67,8 @@ export class EpubService {
 
         try {
           const xhtmlContent = await this.readFileFromZip(zip, xhtmlPath);
-          const nodes = this.parseXhtml(xhtmlContent);
+          // [결정론적 ID 생성] 파일명(href) 전달
+          const nodes = this.parseXhtml(xhtmlContent, manifestItem.href);
 
           chapters.push({
             fileName: manifestItem.href,
@@ -98,10 +98,17 @@ export class EpubService {
    * - <img>, <svg> → type: 'image' (보존)
    * - 기타 구조 태그 → type: 'ignored' (보존)
    * 
+   * [결정론적 ID 규칙]
+   * ID = `{fileName}_{nodeIndex}`
+   * 예: Text/chapter1.xhtml_0
+   * 이를 통해 동일한 파일을 다시 파싱해도 항상 동일한 ID가 생성되어
+   * 스냅샷 복구 시 기존 번역 데이터와 매핑이 가능해짐.
+   * 
    * @param xhtmlContent XHTML 문자열
+   * @param fileName 현재 파싱 중인 파일의 이름(경로)
    * @returns EpubNode[] 평탄화된 노드 배열
    */
-  parseXhtml(xhtmlContent: string): EpubNode[] {
+  parseXhtml(xhtmlContent: string, fileName: string): EpubNode[] {
     const parser = new DOMParser();
     const doc = parser.parseFromString(xhtmlContent, 'application/xhtml+xml');
 
@@ -121,14 +128,19 @@ export class EpubService {
       return nodes;
     }
 
+    // 노드 인덱스 초기화 (결정론적 ID 생성용)
+    let nodeIndex = 0;
+
     // body의 직계 자식들 순회
     Array.from(body.children).forEach((el) => {
       const tagName = el.tagName.toLowerCase();
+      // 결정론적 ID 생성
+      const deterministicId = `${fileName}_${nodeIndex++}`;
 
       if (imageTags.includes(tagName)) {
         // 이미지 태그: 원본 HTML 통째로 보존
         nodes.push({
-          id: uuidv4(),
+          id: deterministicId,
           type: 'image',
           tag: tagName,
           html: el.outerHTML,
@@ -136,7 +148,7 @@ export class EpubService {
       } else if (textBlockTags.includes(tagName) && el.textContent?.trim()) {
         // 텍스트 블록 태그: 순수 텍스트만 추출
         nodes.push({
-          id: uuidv4(),
+          id: deterministicId,
           type: 'text',
           tag: tagName,
           content: this.extractPureText(el),
@@ -145,7 +157,7 @@ export class EpubService {
       } else if (el.textContent?.trim()) {
         // 기타 태그이지만 텍스트 있음: ignored로 보존
         nodes.push({
-          id: uuidv4(),
+          id: deterministicId,
           type: 'ignored',
           tag: tagName,
           html: el.outerHTML,
