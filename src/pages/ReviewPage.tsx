@@ -6,13 +6,54 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { 
   CheckCircle, AlertTriangle, RefreshCw, Copy, Eye, EyeOff, 
   TrendingUp, AlertCircle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  Trash2, Edit2, Save, X, Zap 
+  Trash2, Edit2, Save, X, Zap, ImageIcon, FileText, Folder
 } from 'lucide-react';
 import { useTranslationStore } from '../stores/translationStore';
 import { useTranslation } from '../hooks/useTranslation';
+import { useEpubReview } from '../hooks/useEpubReview';
 import type { TranslationResult } from '../types/dtos';
 import { Button, IconButton, ButtonGroup, ConfirmDialog } from '../components';
 import { QualityCheckService, type RegressionAnalysis, type SuspiciousChunk } from '../services/QualityCheckService';
+import JSZip from 'jszip';
+
+/**
+ * 이미지 미리보기 컴포넌트
+ */
+function ImagePreview({ file, imagePath }: { file: File; imagePath: string }) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    const loadImage = async () => {
+      try {
+        const zip = await JSZip.loadAsync(file);
+        const imageFile = zip.file(imagePath);
+        if (imageFile) {
+          const blob = await imageFile.async('blob');
+          objectUrl = URL.createObjectURL(blob);
+          setImageUrl(objectUrl);
+        }
+      } catch (error) {
+        console.error('Failed to load image:', error);
+      }
+    };
+
+    loadImage();
+
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [file, imagePath]);
+
+  if (!imageUrl) return null;
+
+  return (
+    <div className="mb-4 p-2 bg-gray-50 rounded border border-gray-200 inline-block">
+      <img src={imageUrl} alt="Context" className="max-h-64 rounded" />
+      <div className="text-xs text-gray-500 mt-1 text-center">{imagePath}</div>
+    </div>
+  );
+}
 
 /**
  * 청크 상태 배지 컴포넌트 (수정됨: 품질 이슈 표시 추가)
@@ -55,6 +96,12 @@ function StatusBadge({ success, issue }: { success: boolean, issue?: SuspiciousC
 interface ChunkCardProps {
   result: TranslationResult;
   qualityIssue?: SuspiciousChunk; // [추가] 품질 이슈 데이터
+  meta?: {
+    label?: string;
+    tag?: string;
+    hasImage?: boolean;
+    onPreview?: () => React.ReactNode;
+  };
   isExpanded: boolean;
   onToggle: (index: number) => void;
   onRetry: (index: number) => void;
@@ -65,6 +112,7 @@ interface ChunkCardProps {
 const ChunkCard = React.memo(function ChunkCard({ 
   result, 
   qualityIssue, // [추가]
+  meta,
   isExpanded, 
   onToggle, 
   onRetry, 
@@ -145,12 +193,26 @@ const ChunkCard = React.memo(function ChunkCard({
         className={`flex items-center justify-between px-4 py-3 cursor-pointer transition-colors ${headerBgClass}`}
         onClick={handleToggleClick}
       >
-        <div className="flex items-center gap-3">
-          <span className="font-medium text-gray-700">청크 #{result.chunkIndex + 1}</span>
+        <div className="flex items-center gap-3 overflow-hidden">
+          <span className="font-medium text-gray-700 flex-shrink-0">청크 #{result.chunkIndex + 1}</span>
+          
+          {/* [변경] meta 정보가 있을 때만 렌더링 (텍스트 모드는 렌더링 안 함) */}
+          {meta && (
+            <div className="flex items-center gap-2 text-xs text-gray-500 flex-shrink-0">
+              {meta.label && (
+                <span className="flex items-center gap-1 bg-white px-2 py-0.5 rounded border max-w-[150px] truncate" title={meta.label}>
+                   <FileText className="w-3 h-3" /> {meta.label}
+                </span>
+              )}
+              {meta.tag && <span className="bg-gray-100 px-1.5 rounded uppercase font-mono">{meta.tag}</span>}
+              {meta.hasImage && <ImageIcon className="w-3 h-3 text-blue-500" />}
+            </div>
+          )}
+
           {/* [수정] 배지에 issue 전달 */}
           <StatusBadge success={result.success} issue={qualityIssue} />
           
-          <span className="text-sm text-gray-500 hidden sm:inline">
+          <span className="text-sm text-gray-500 hidden sm:inline truncate">
             원문 {result.originalText.length}자 → 번역 {result.translatedText.length}자 ({ratio}%)
           </span>
         </div>
@@ -200,6 +262,9 @@ const ChunkCard = React.memo(function ChunkCard({
       {/* 상세 내용 */}
       {isExpanded && (
         <div className="p-4 space-y-4">
+          {/* [변경] 미리보기 함수가 있으면 실행 */}
+          {meta?.onPreview && meta.onPreview()}
+
           {/* [추가] 품질 이슈 알림 박스 (확장 시 상단에 표시) */}
           {qualityIssue && (
              <div className={`p-3 rounded-lg text-sm flex items-start gap-2 ${
@@ -423,8 +488,18 @@ const ITEMS_PER_PAGE = 20;
  * 검토 및 수정 페이지 메인 컴포넌트
  */
 export function ReviewPage() {
-  const { results, updateResult, combineResultsToText } = useTranslationStore();
+  const { results, updateResult, combineResultsToText, inputFiles } = useTranslationStore();
   const { retryFailedChunks, retrySingleChunk } = useTranslation();
+  
+  // [핵심] Custom Hook 사용: 여기서 모든 복잡성을 처리합니다.
+  const { 
+    isEpubMode, 
+    chapters, 
+    selectedChapter, 
+    setSelectedChapter, 
+    getChunkMeta, 
+    filterByChapter 
+  } = useEpubReview(inputFiles, results);
   
   const [filter, setFilter] = useState<'all' | 'success' | 'failed' | 'warning'>('all');
   const [expandedChunks, setExpandedChunks] = useState<Set<number>>(new Set());
@@ -447,18 +522,24 @@ export function ReviewPage() {
 
   // 필터링된 결과
   const filteredResults = useMemo(() => {
-    const sorted = [...results].sort((a, b) => a.chunkIndex - b.chunkIndex);
+    let sorted = [...results].sort((a, b) => a.chunkIndex - b.chunkIndex);
     switch (filter) {
       case 'success':
-        return sorted.filter(r => r.success);
+        sorted = sorted.filter(r => r.success);
+        break;
       case 'failed':
-        return sorted.filter(r => !r.success);
+        sorted = sorted.filter(r => !r.success);
+        break;
       case 'warning': // [추가] 의심 항목 필터링
-        return sorted.filter(r => suspiciousChunkMap.has(r.chunkIndex));
-      default:
-        return sorted;
+        sorted = sorted.filter(r => suspiciousChunkMap.has(r.chunkIndex));
+        break;
     }
-  }, [results, filter, suspiciousChunkMap]);
+    
+    // [추가] 챕터 필터 적용 (훅에서 제공하는 함수 사용)
+    sorted = filterByChapter(sorted);
+
+    return sorted;
+  }, [results, filter, suspiciousChunkMap, filterByChapter]);
 
   // 페이지 변경 시 스크롤 상단 이동
   useEffect(() => {
@@ -605,100 +686,148 @@ export function ReviewPage() {
             {/* 필터 */}
             <ReviewFilter filter={filter} setFilter={setFilter} />
 
-            {/* 청크 목록 */}
-            <div className="space-y-3">
-              {paginatedResults.map(result => (
-                <ChunkCard
-                  key={result.chunkIndex}
-                  result={result}
-                  // [중요] 해당 청크의 품질 이슈 전달
-                  qualityIssue={suspiciousChunkMap.get(result.chunkIndex)}
-                  isExpanded={expandedChunks.has(result.chunkIndex)}
-                  onToggle={toggleExpand}
-                  onRetry={handleSingleRetry}
-                  onDiscard={handleRequestDiscard}
-                  onUpdate={handleUpdateText}
-                />
-              ))}
-            </div>
+            <div className="flex flex-col md:flex-row gap-6">
+              {/* [변경] EPUB 모드일 때만 사이드바 렌더링 */}
+              {isEpubMode && (
+                <div className="w-full md:w-64 flex-shrink-0">
+                  <div className="bg-gray-50 rounded-lg p-3 h-fit sticky top-4">
+                    <h3 className="font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                      <Folder className="w-4 h-4" /> 챕터 ({chapters.length})
+                    </h3>
+                    <div className="space-y-1 max-h-[60vh] overflow-y-auto">
+                      <button 
+                        onClick={() => setSelectedChapter('all')}
+                        className={`w-full text-left px-3 py-2 rounded text-sm ${selectedChapter === 'all' ? 'bg-white shadow-sm text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
+                      >
+                        전체 보기
+                      </button>
+                      {chapters.map((ch, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => setSelectedChapter(ch)}
+                          className={`w-full text-left px-3 py-2 rounded text-sm truncate ${selectedChapter === ch ? 'bg-white shadow-sm text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
+                        >
+                           {ch.split('/').pop()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
 
-            {/* 페이지네이션 컨트롤 */}
-            {totalPages > 1 && (
-              <div className="flex justify-center items-center gap-1 mt-6 select-none">
-                {/* 맨 처음 */}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handlePageChange(1)}
-                  disabled={currentPage === 1}
-                  title="첫 페이지"
-                  className="px-2"
-                >
-                  <ChevronsLeft className="w-4 h-4" />
-                </Button>
+              <div className="flex-1 min-w-0">
+                {/* 청크 목록 */}
+                <div className="space-y-3">
+                  {paginatedResults.map(result => {
+                    // [변경] 훅을 통해 메타데이터 가져오기
+                    const epubMeta = getChunkMeta(result.chunkIndex);
+                    
+                    // 메타데이터 prop 구성 (EPUB이 아니면 undefined)
+                    const metaProps = epubMeta ? {
+                      label: epubMeta.fileName.split('/').pop(),
+                      tag: epubMeta.tag,
+                      hasImage: !!epubMeta.imagePath,
+                      onPreview: epubMeta.imagePath && epubMeta.epubFile
+                        ? () => <ImagePreview file={epubMeta.epubFile!} imagePath={epubMeta.imagePath!} />
+                        : undefined
+                    } : undefined;
 
-                {/* 이전 */}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handlePageChange(currentPage - 1)}
-                  disabled={currentPage === 1}
-                  title="이전 페이지"
-                  className="px-2"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-
-                {/* 숫자 페이지네이션 (슬라이딩 윈도우) */}
-                <div className="flex items-center gap-1 mx-2">
-                  {getPageNumbers().map(pageNum => (
-                    <button
-                      key={pageNum}
-                      onClick={() => handlePageChange(pageNum)}
-                      className={`
-                        min-w-[32px] h-8 flex items-center justify-center rounded-md text-sm font-medium transition-colors
-                        ${currentPage === pageNum 
-                          ? 'bg-primary-600 text-white shadow-sm' 
-                          : 'text-gray-700 hover:bg-gray-100'
-                        }
-                      `}
-                    >
-                      {pageNum}
-                    </button>
-                  ))}
+                    return (
+                      <ChunkCard
+                        key={result.chunkIndex}
+                        result={result}
+                        // [중요] 해당 청크의 품질 이슈 전달
+                        qualityIssue={suspiciousChunkMap.get(result.chunkIndex)}
+                        meta={metaProps}
+                        isExpanded={expandedChunks.has(result.chunkIndex)}
+                        onToggle={toggleExpand}
+                        onRetry={handleSingleRetry}
+                        onDiscard={handleRequestDiscard}
+                        onUpdate={handleUpdateText}
+                      />
+                    );
+                  })}
                 </div>
 
-                {/* 다음 */}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handlePageChange(currentPage + 1)}
-                  disabled={currentPage === totalPages}
-                  title="다음 페이지"
-                  className="px-2"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
+                {/* 페이지네이션 컨트롤 */}
+                {totalPages > 1 && (
+                  <div className="flex justify-center items-center gap-1 mt-6 select-none">
+                    {/* 맨 처음 */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handlePageChange(1)}
+                      disabled={currentPage === 1}
+                      title="첫 페이지"
+                      className="px-2"
+                    >
+                      <ChevronsLeft className="w-4 h-4" />
+                    </Button>
 
-                {/* 맨 끝 */}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handlePageChange(totalPages)}
-                  disabled={currentPage === totalPages}
-                  title="마지막 페이지"
-                  className="px-2"
-                >
-                  <ChevronsRight className="w-4 h-4" />
-                </Button>
-              </div>
-            )}
+                    {/* 이전 */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handlePageChange(currentPage - 1)}
+                      disabled={currentPage === 1}
+                      title="이전 페이지"
+                      className="px-2"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </Button>
 
-            {filteredResults.length === 0 && (
-              <div className="text-center py-8 text-gray-500">
-                해당 필터에 맞는 결과가 없습니다.
+                    {/* 숫자 페이지네이션 (슬라이딩 윈도우) */}
+                    <div className="flex items-center gap-1 mx-2">
+                      {getPageNumbers().map(pageNum => (
+                        <button
+                          key={pageNum}
+                          onClick={() => handlePageChange(pageNum)}
+                          className={`
+                            min-w-[32px] h-8 flex items-center justify-center rounded-md text-sm font-medium transition-colors
+                            ${currentPage === pageNum 
+                              ? 'bg-primary-600 text-white shadow-sm' 
+                              : 'text-gray-700 hover:bg-gray-100'
+                            }
+                          `}
+                        >
+                          {pageNum}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* 다음 */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handlePageChange(currentPage + 1)}
+                      disabled={currentPage === totalPages}
+                      title="다음 페이지"
+                      className="px-2"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </Button>
+
+                    {/* 맨 끝 */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handlePageChange(totalPages)}
+                      disabled={currentPage === totalPages}
+                      title="마지막 페이지"
+                      className="px-2"
+                    >
+                      <ChevronsRight className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
+
+                {filteredResults.length === 0 && (
+                  <div className="text-center py-8 text-gray-500">
+                    해당 필터에 맞는 결과가 없습니다.
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </>
         )}
       </div>
