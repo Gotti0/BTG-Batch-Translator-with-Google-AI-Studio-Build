@@ -278,9 +278,6 @@ export function useTranslation() {
   // === 작업 이어하기(Snapshot) 기능 ===
 
   /**
-   * 현재 작업을 스냅샷(JSON)으로 내보내기
-   */
-  /**
    * Phase 5: EPUB 파일을 Base64로 인코딩
    */
   const encodeEpubToBase64 = useCallback(async (epubFile: File): Promise<string> => {
@@ -297,6 +294,9 @@ export function useTranslation() {
     });
   }, []);
 
+  /**
+   * 현재 작업을 스냅샷(JSON)으로 내보내기
+   */
   const exportSnapshot = useCallback(async (mode: 'text' | 'epub' = 'text', epubChapters?: any[]) => {
     if (inputFiles.length === 0) {
       addLog('warning', '내보낼 작업이 없습니다.');
@@ -334,10 +334,25 @@ export function useTranslation() {
       translated_chunks: {},
     };
 
+    // [추가] EPUB 모드일 경우, 인덱스를 ID로 변환하기 위한 맵 생성
+    // epubChapters의 모든 노드를 순서대로 펼쳐서 ID 목록을 만듭니다.
+    let nodeIdMap: string[] = [];
+    if (mode === 'epub' && epubChapters) {
+      nodeIdMap = epubChapters.flatMap((ch: any) => ch.nodes).map((n: any) => n.id);
+    }
+
     // 청크 맵핑
     results.forEach(result => {
       if (result.success) {
-        snapshot.translated_chunks[result.chunkIndex.toString()] = {
+        // 기본 키는 인덱스 (텍스트 모드용)
+        let key = result.chunkIndex.toString();
+        
+        // [수정] EPUB 모드이고 매핑되는 ID가 있다면, 그 ID를 키로 사용
+        if (mode === 'epub' && nodeIdMap[result.chunkIndex]) {
+          key = nodeIdMap[result.chunkIndex];
+        }
+
+        snapshot.translated_chunks[key] = {
           original_text: result.originalText,
           translated_text: result.translatedText,
           status: 'success',
