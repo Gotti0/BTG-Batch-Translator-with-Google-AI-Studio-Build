@@ -69,7 +69,7 @@ export class EpubService {
         try {
           const xhtmlContent = await this.readFileFromZip(zip, xhtmlPath);
           // [결정론적 ID 생성] 파일명(href) 전달
-          const nodes = this.parseXhtml(xhtmlContent, manifestItem.href);
+          const { nodes, head } = this.parseXhtml(xhtmlContent, manifestItem.href);
 
           // [디버깅] 파싱된 노드 검증
           if (nodes.length === 0) {
@@ -81,6 +81,7 @@ export class EpubService {
           chapters.push({
             fileName: xhtmlPath, // [수정] ZIP 내부의 전체 경로를 사용해야 덮어쓰기가 됨
             nodes,
+            head,
           });
 
           console.log(`✅ 파싱 완료: ${xhtmlPath} (${nodes.length}개 노드)`);
@@ -112,9 +113,9 @@ export class EpubService {
    * 
    * @param xhtmlContent XHTML 문자열
    * @param fileName 현재 파싱 중인 파일의 이름(경로)
-   * @returns EpubNode[] 평탄화된 노드 배열
+   * @returns { nodes: EpubNode[], head: string } 평탄화된 노드 배열 및 헤드 내용
    */
-  parseXhtml(xhtmlContent: string, fileName: string): EpubNode[] {
+  parseXhtml(xhtmlContent: string, fileName: string): { nodes: EpubNode[], head: string } {
     const parser = new DOMParser();
     const doc = parser.parseFromString(xhtmlContent, 'application/xhtml+xml');
 
@@ -126,14 +127,40 @@ export class EpubService {
     const nodes: EpubNode[] = [];
     let nodeIndex = 0;
 
+    // 헤드 태그 내용 추출 (title, meta, link 등 보존)
+    let head = '';
+    if (doc.head) {
+      // Title 태그를 별도 노드로 추출하여 번역 대상에 포함
+      const titleEl = doc.head.querySelector('title');
+      if (titleEl) {
+        const content = titleEl.textContent || '';
+        // Title은 body가 아닌 head에 속하므로 특별한 ID 부여 (순서상 맨 앞)
+        const deterministicId = `${fileName}_title`;
+        
+        nodes.push({
+          id: deterministicId,
+          type: 'text',
+          tag: 'title',
+          content,
+          attributes: this.getAttributes(titleEl),
+        });
+        
+        // head 문자열에서 title 제거 (중복 방지)
+        titleEl.remove();
+      }
+      head = doc.head.innerHTML;
+    }
+
     // 태그 분류 정의
     const imageTags = ['img', 'svg'];
     // 말단 블록 태그: 더 이상 분해하지 않고 텍스트를 추출할 단위
     const leafBlockTags = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre', 'hr'];
+    // 구조 보존 태그: 내부 요소를 순회하되, 자신의 태그도 보존해야 하는 컨테이너 (네비게이션 등)
+    const structuralTags = ['nav', 'ol', 'ul', 'li'];
     // 컨테이너 태그: 내부 구조에 따라 재귀 여부를 결정할 태그들
     const potentialContainerTags = [
       'div', 'section', 'article', 'main', 'aside', 'header', 'footer', 
-      'blockquote', 'ul', 'ol', 'li', 'dl', 'dt', 'dd', 'table', 'tr', 'td', 'th', 'body', 'form', 'nav'
+      'blockquote', 'dl', 'dt', 'dd', 'table', 'tr', 'td', 'th', 'body', 'form'
     ];
 
     /**
@@ -144,6 +171,24 @@ export class EpubService {
 
       children.forEach((el) => {
         const tagName = el.tagName.toLowerCase();
+
+        // 0. 구조 보존 컨테이너 처리 (nav, ol, ul, li 등)
+        // 자식 요소가 있는 경우에만 구조를 보존하고 순회 (자식이 없으면 말단으로 처리하여 텍스트 추출)
+        if (structuralTags.includes(tagName) && el.children.length > 0) {
+           // Opening Tag (속성 포함)
+           const clone = el.cloneNode(false) as Element;
+           const html = clone.outerHTML;
+           // <tag ...></tag> 형태에서 </tag> 제거하여 Opening Tag만 추출
+           const openingHtml = html.substring(0, html.lastIndexOf('<'));
+           
+           nodes.push({ id: `${fileName}_${nodeIndex++}`, type: 'ignored', tag: tagName, html: openingHtml });
+           
+           traverse(el);
+           
+           // Closing Tag
+           nodes.push({ id: `${fileName}_${nodeIndex++}`, type: 'ignored', tag: tagName, html: `</${tagName}>` });
+           return;
+        }
 
         // 1. 이미지 처리
         if (imageTags.includes(tagName)) {
@@ -196,9 +241,11 @@ export class EpubService {
         // 3. 컨테이너 처리 (div, section, etc.)
         if (potentialContainerTags.includes(tagName)) {
           // 내부에 블록 레벨 자식이 있는지 확인 (재귀 필요성 판단)
+          // [수정] 이미지 태그(img, svg)가 포함된 경우에도 컨테이너를 해체하고 내부로 진입해야 함
+          // 그렇지 않으면 <div><img></div> 같은 구조에서 이미지가 텍스트 취급되어 무시됨
           const hasBlockChildren = Array.from(el.children).some(child => {
             const t = child.tagName.toLowerCase();
-            return leafBlockTags.includes(t) || potentialContainerTags.includes(t);
+            return leafBlockTags.includes(t) || potentialContainerTags.includes(t) || imageTags.includes(t);
           });
 
           if (hasBlockChildren) {
@@ -243,7 +290,7 @@ export class EpubService {
       traverse(doc.body);
     }
 
-    return nodes;
+    return { nodes, head };
   }
 
   /**
@@ -350,13 +397,33 @@ export class EpubService {
    * 번역된 노드 배열을 XHTML 문자열로 재조립
    * 
    * @param nodes 번역된 EpubNode 배열
+   * @param head 원본 헤드 태그 내용 (옵션)
    * @returns XHTML 문자열
    */
-  reconstructXhtml(nodes: EpubNode[]): string {
+  reconstructXhtml(nodes: EpubNode[], head?: string): string {
     let xhtmlContent = '<?xml version="1.0" encoding="UTF-8"?>\n';
-    xhtmlContent += '<html xmlns="http://www.w3.org/1999/xhtml">\n<body>\n';
+    xhtmlContent += '<html xmlns="http://www.w3.org/1999/xhtml">\n';
+    
+    // Head 재구성
+    xhtmlContent += '<head>\n';
+    if (head) {
+      xhtmlContent += head + '\n';
+    }
+    
+    // Title 노드 찾아서 Head에 추가
+    const titleNode = nodes.find(n => n.tag === 'title');
+    if (titleNode) {
+      const attrs = titleNode.attributes ? this.attributesToString(titleNode.attributes) : '';
+      xhtmlContent += `  <title${attrs}>${this.escapeHtml(titleNode.content ?? '')}</title>\n`;
+    }
+    xhtmlContent += '</head>\n';
+    
+    xhtmlContent += '<body>\n';
 
     nodes.forEach((node) => {
+      // Title은 이미 Head에 추가했으므로 Body에서는 제외
+      if (node.tag === 'title') return;
+
       if (node.type === 'text') {
         // 텍스트 노드: 번역된 내용으로 태그 재생성
         const attrs = node.attributes ? this.attributesToString(node.attributes) : '';
@@ -385,7 +452,7 @@ export class EpubService {
 
     // 챕터별로 XHTML 파일 업데이트
     for (const chapter of chapters) {
-      const xhtmlContent = this.reconstructXhtml(chapter.nodes);
+      const xhtmlContent = this.reconstructXhtml(chapter.nodes, chapter.head);
       zip.file(chapter.fileName, xhtmlContent);
     }
 

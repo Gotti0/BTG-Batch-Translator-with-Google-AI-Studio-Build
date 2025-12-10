@@ -42,6 +42,9 @@ export interface EpubChapter {
 
   /** 평탄화된 노드 리스트 */
   nodes: EpubNode[];
+
+  /** 원본 헤드 태그 내용 (title, meta, link 등 보존용) */
+  head?: string;
 }
 
 /**
