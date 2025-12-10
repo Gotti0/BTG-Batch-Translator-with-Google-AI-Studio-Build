@@ -1058,13 +1058,31 @@ export class TranslationService {
         translations.map((t) => [t.id, t.translated_text])
       );
 
+      // [디버깅] 매핑 상태 확인
+      const mappedCount = nodes.filter(n => n.type === 'text' && translationMap.has(n.id)).length;
+      const totalTextNodes = nodes.filter(n => n.type === 'text').length;
+      
+      if (mappedCount < totalTextNodes) {
+        this.log('warning', `⚠️ ID 매칭 실패 감지: 텍스트 노드 ${totalTextNodes}개 중 ${mappedCount}개만 매칭됨.`);
+        // 매칭되지 않은 첫 번째 노드 정보 출력
+        const unmapped = nodes.find(n => n.type === 'text' && !translationMap.has(n.id));
+        if (unmapped) {
+            this.log('warning', `   - 실패 예시: 원본 ID '${unmapped.id}' vs 응답 ID 샘플 '${translations[0]?.id}'`);
+        }
+      }
+
       // 원본 노드에 번역 결과 병합
       return nodes.map((node) => {
-        if (node.type === 'text' && translationMap.has(node.id)) {
-          return {
-            ...node,
-            content: translationMap.get(node.id),
-          };
+        if (node.type === 'text') {
+            if (translationMap.has(node.id)) {
+                return {
+                    ...node,
+                    content: translationMap.get(node.id),
+                };
+            } else {
+                // 매핑 실패 시 로그 (너무 많으면 주석 처리)
+                // console.warn(`ID Mismatch: ${node.id}`);
+            }
         }
         return node;
       });

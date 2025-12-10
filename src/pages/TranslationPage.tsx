@@ -690,6 +690,14 @@ export function TranslationPage() {
 
           addLog('info', '📚 [단계 3/4] 번역된 데이터를 EPUB 포맷으로 재조립합니다.');
 
+          // [디버깅] 번역 결과 샘플 확인
+          const sampleNode = translatedNodes.find(n => n.type === 'text' && n.content?.trim().length > 0);
+          if (sampleNode) {
+             addLog('info', `🔍 번역 데이터 검증 (샘플): ID=${sampleNode.id}, 내용=${sampleNode.content?.substring(0, 30)}...`);
+          } else {
+             addLog('warning', '⚠️ 번역된 텍스트 노드를 찾을 수 없습니다!');
+          }
+
           // EPUB 재조립
           const epubService = new EpubService();
           let nodeIndex = 0;
