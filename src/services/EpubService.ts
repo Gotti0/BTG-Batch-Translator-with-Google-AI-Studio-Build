@@ -72,11 +72,11 @@ export class EpubService {
           const nodes = this.parseXhtml(xhtmlContent, manifestItem.href);
 
           chapters.push({
-            fileName: manifestItem.href,
+            fileName: xhtmlPath, // [수정] ZIP 내부의 전체 경로를 사용해야 덮어쓰기가 됨
             nodes,
           });
 
-          console.log(`✅ 파싱 완료: ${manifestItem.href} (${nodes.length}개 노드)`);
+          console.log(`✅ 파싱 완료: ${xhtmlPath} (${nodes.length}개 노드)`);
         } catch (error) {
           console.warn(`⚠️ XHTML 파싱 실패: ${xhtmlPath}`, error);
           console.log(`   시도: ${xhtmlPath}, OPF: ${opfPath}, href: ${manifestItem.href}`);
