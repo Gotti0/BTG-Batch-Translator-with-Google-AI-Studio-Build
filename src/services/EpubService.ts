@@ -71,6 +71,13 @@ export class EpubService {
           // [결정론적 ID 생성] 파일명(href) 전달
           const nodes = this.parseXhtml(xhtmlContent, manifestItem.href);
 
+          // [디버깅] 파싱된 노드 검증
+          if (nodes.length === 0) {
+             console.warn(`⚠️ 빈 챕터 감지: ${xhtmlPath}`);
+             // 원본 내용 로깅 (너무 길면 앞부분만)
+             console.log(`   - 원본 내용(앞 100자): ${xhtmlContent.substring(0, 100).replace(/\n/g, ' ')}`);
+          }
+
           chapters.push({
             fileName: xhtmlPath, // [수정] ZIP 내부의 전체 경로를 사용해야 덮어쓰기가 됨
             nodes,
