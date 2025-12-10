@@ -732,7 +732,8 @@ export class TranslationService {
     glossaryEntries?: GlossaryEntry[],
     onProgress?: ProgressCallback,
     onResult?: (result: TranslationResult) => void,
-    zip?: JSZip
+    zip?: JSZip,
+    existingResults?: TranslationResult[]
   ): Promise<EpubNode[]> {
     this.resetStop();
     this.log('info', `🚀 EPUB 번역 시작: ${nodes.length}개 노드`);
@@ -746,6 +747,17 @@ export class TranslationService {
 
       const chunks = epubChunkService.splitEpubNodesIntoChunks(nodes);
       this.log('info', `📦 ${chunks.length}개 청크로 분할 완료`);
+
+      // [추가] 2. 기존 결과 맵핑 (O(1) 조회를 위해)
+      const existingMap = new Map<number, TranslationResult>();
+      if (existingResults) {
+        existingResults.forEach(r => {
+          if (r.success) existingMap.set(r.chunkIndex, r);
+        });
+        if (existingMap.size > 0) {
+          this.log('info', `🔄 기존 번역 결과 ${existingMap.size}개를 감지했습니다. 스킵을 시도합니다.`);
+        }
+      }
 
       // 2. 병렬 처리 준비
       const maxWorkers = this.config.maxWorkers || 1;
@@ -777,6 +789,46 @@ export class TranslationService {
           break;
         }
 
+        // [핵심] 4. 이미 번역된 청크인지 확인
+        if (existingMap.has(i)) {
+          const existing = existingMap.get(i)!;
+          const currentChunkNodes = chunks[i]; // 현재 청크의 원본 노드들
+
+          // [중요] 기존 결과(텍스트/세그먼트)를 원본 노드에 입히는 복원 로직
+          const restoredNodes = this.restoreNodesFromResult(currentChunkNodes, existing);
+
+          if (restoredNodes) {
+            // 복원 성공 시
+            chunkResults.set(i, restoredNodes);
+            processedChunks++;
+            successfulChunks++;
+            
+            this.log('info', `⏩ 청크 ${i + 1} 스킵 (기존 결과 사용)`);
+
+            // UI 갱신을 위해 onResult 호출 (ReviewPage에 즉시 반영됨)
+            if (onResult) {
+              onResult(existing);
+            }
+            
+            // 진행률 업데이트
+            if (onProgress) {
+              onProgress({
+                totalChunks: chunks.length,
+                processedChunks,
+                successfulChunks,
+                failedChunks,
+                currentStatusMessage: `청크 ${i + 1} 복원 완료`,
+                etaSeconds: 0,
+              });
+            }
+
+            continue; // ★ API 호출 건너뛰기
+          } else {
+            // 복원 실패 시 (노드 불일치 등) -> 로그 남기고 재번역 시도
+            this.log('warning', `⚠️ 청크 ${i + 1} 복원 실패 (데이터 불일치). 재번역을 진행합니다.`);
+          }
+        }
+
         const task = (async () => {
           if (this.stopRequested) return;
 
@@ -795,6 +847,8 @@ export class TranslationService {
                 chunkIndex: i,
                 originalText: chunks[i].map(n => n.content || '').join('\n\n'),
                 translatedText: translated.map(n => n.content || '').join('\n\n'),
+                // [추가] 구조적 저장용 데이터 (순수한 콘텐츠 배열)
+                translatedSegments: translated.map(n => n.content || ''),
                 success: true
               });
             }
@@ -823,6 +877,8 @@ export class TranslationService {
                 chunkIndex: i,
                 originalText: chunks[i].map(n => n.content || '').join('\n\n'),
                 translatedText: retriedNodes.map(n => n.content || '').join('\n\n'),
+                // [추가] 구조적 저장용 데이터 (순수한 콘텐츠 배열)
+                translatedSegments: retriedNodes.map(n => n.content || ''),
                 success: true // 부분적으로 성공했을 수 있으므로 true로 처리하거나, 별도 상태 필요
               });
             }
@@ -1113,5 +1169,51 @@ export class TranslationService {
     }
 
     return results;
+  }
+
+  /**
+   * 기존 번역 결과를 바탕으로 노드 내용을 복원합니다.
+   */
+  private restoreNodesFromResult(nodes: EpubNode[], result: TranslationResult): EpubNode[] | null {
+    // 텍스트 노드만 추출 (순서 중요)
+    const textNodes = nodes.filter(n => n.type === 'text');
+    
+    // 1. [권장] 세그먼트 배열이 있는 경우 (완벽한 복원)
+    if (result.translatedSegments && result.translatedSegments.length > 0) {
+      if (textNodes.length !== result.translatedSegments.length) {
+        return null; // 개수 불일치 -> 복원 실패
+      }
+      
+      // 원본 노드 배열을 깊은 복사하여 안전하게 처리
+      const newNodes = JSON.parse(JSON.stringify(nodes));
+      const newTextNodes = newNodes.filter((n: EpubNode) => n.type === 'text');
+
+      newTextNodes.forEach((node: EpubNode, idx: number) => {
+        node.content = result.translatedSegments![idx];
+      });
+      
+      return newNodes;
+    }
+
+    // 2. [차선] 텍스트만 있는 경우 (\n\n 분할 시도)
+    // 이전 버전 스냅샷 호환용
+    if (result.translatedText) {
+      const segments = result.translatedText.trim().split(/\n\n/);
+      
+      if (textNodes.length !== segments.length) {
+        return null; // 개수 불일치 -> 복원 실패
+      }
+
+      const newNodes = JSON.parse(JSON.stringify(nodes));
+      const newTextNodes = newNodes.filter((n: EpubNode) => n.type === 'text');
+
+      newTextNodes.forEach((node: EpubNode, idx: number) => {
+        node.content = segments[idx];
+      });
+
+      return newNodes;
+    }
+
+    return null;
   }
 }

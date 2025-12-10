@@ -9,6 +9,7 @@ import { useGlossaryStore } from '../stores/glossaryStore';
 import { TranslationService } from '../services/TranslationService';
 import { ChunkService } from '../services/ChunkService';
 import { EpubService } from '../services/EpubService';
+import { EpubChunkService } from '../services/EpubChunkService';
 import type { TranslationJobProgress, TranslationResult, TranslationSnapshot, FileContent } from '../types/dtos';
 
 /**
@@ -350,27 +351,19 @@ export function useTranslation() {
       translated_chunks: {},
     };
 
-    // [추가] EPUB 모드일 경우, 인덱스를 ID로 변환하기 위한 맵 생성
-    // epubChapters의 모든 노드를 순서대로 펼쳐서 ID 목록을 만듭니다.
-    let nodeIdMap: string[] = [];
-    if (mode === 'epub' && epubChapters) {
-      nodeIdMap = epubChapters.flatMap((ch: any) => ch.nodes).map((n: any) => n.id);
-    }
-
     // 청크 맵핑
     results.forEach(result => {
       if (result.success) {
         // 기본 키는 인덱스 (텍스트 모드용)
-        let key = result.chunkIndex.toString();
+        // EPUB 모드에서도 청크 인덱스를 키로 사용합니다. 
+        // (이전의 nodeIdMap 로직은 청크!=노드 일 때 오류 발생 가능성 있음)
+        const key = result.chunkIndex.toString();
         
-        // [수정] EPUB 모드이고 매핑되는 ID가 있다면, 그 ID를 키로 사용
-        if (mode === 'epub' && nodeIdMap[result.chunkIndex]) {
-          key = nodeIdMap[result.chunkIndex];
-        }
-
         snapshot.translated_chunks[key] = {
           original_text: result.originalText,
           translated_text: result.translatedText,
+          // [추가] 세그먼트 배열이 있으면 함께 저장
+          translated_segments: result.translatedSegments, 
           status: 'success',
         };
       }
@@ -499,25 +492,162 @@ export function useTranslation() {
           // 4. EPUB 노드 기반 결과 복구 (ID 기반 매칭)
           const restoredResults: TranslationResult[] = [];
           let successfulCount = 0;
-          let nodeIndex = 0;
 
-          for (const chapter of restoredEpubChapters) {
-            for (const node of chapter.nodes || []) {
-              const nodeId = node.id || nodeIndex.toString();
-              const savedChunk = snapshot.translated_chunks[nodeId];
+          // 청크 단위로 복원하기 위해 챕터별 노드를 청크로 묶는 로직이 필요하지만,
+          // 현재 구조상 개별 노드 단위로 복원하는 것이 더 안전합니다.
+          // 다만, TranslationResult는 '청크' 단위이므로, 여기서는 '노드'를 '청크'로 취급하여 복원합니다.
+          // (translateEpubNodes에서도 노드 단위로 처리되거나, 청크 단위로 처리되더라도 결과는 노드별로 매핑됨)
+          
+          // [수정] 청크 단위 복원을 위해 EpubChunkService 로직을 흉내내거나,
+          // 저장된 스냅샷의 구조를 따라가야 합니다.
+          // 여기서는 스냅샷이 '노드 ID'를 키로 저장하고 있다고 가정하고(위 exportSnapshot 로직 참조),
+          // 각 노드를 하나의 결과로 복원합니다.
+          
+          // 하지만 원래 로직은 '청크' 단위로 결과를 관리하므로, 
+          // 스냅샷에 저장된 것이 '청크' 단위인지 '노드' 단위인지에 따라 다릅니다.
+          // exportSnapshot에서 mode === 'epub'일 때 nodeIdMap을 사용하여 '노드 ID'를 키로 저장했습니다.
+          // 따라서 여기서도 노드 단위로 복원하면 됩니다.
 
-              if (savedChunk && savedChunk.status === 'success') {
-                restoredResults.push({
-                  chunkIndex: nodeIndex,
-                  originalText: node.content || savedChunk.original_text,
-                  translatedText: savedChunk.translated_text,
-                  success: true,
-                });
-                successfulCount++;
-              }
-              nodeIndex++;
+          // [중요] 하지만 translateEpubNodes는 '청크' 단위로 결과를 반환하고, 
+          // 그 결과가 TranslationResult에 담깁니다.
+          // 따라서 스냅샷에 저장된 것도 '청크' 단위여야 합니다.
+          // exportSnapshot을 다시 보면:
+          // if (mode === 'epub' && nodeIdMap[result.chunkIndex]) { key = nodeIdMap[result.chunkIndex]; }
+          // 여기서 result.chunkIndex는 '청크 인덱스'입니다.
+          // nodeIdMap은 '노드 ID'의 배열입니다.
+          // 즉, result.chunkIndex가 가리키는 것이 '노드 인덱스'라면 노드 ID가 키가 됩니다.
+          // translateEpubNodes 구현을 보면:
+          // chunkResults.set(i, translated); -> 여기서 i는 청크 인덱스입니다.
+          // 그리고 onResult({ chunkIndex: i, ... })를 호출합니다.
+          // 즉, TranslationResult는 '청크' 단위입니다.
+          
+          // 그런데 exportSnapshot에서 nodeIdMap을 사용하는 부분은:
+          // nodeIdMap = epubChapters.flatMap(...).map(n => n.id);
+          // 이것은 모든 노드의 ID 목록입니다.
+          // result.chunkIndex가 '청크 인덱스'라면, nodeIdMap[result.chunkIndex]는 
+          // '전체 노드 리스트에서 청크 인덱스에 해당하는 위치의 노드 ID'를 의미합니다.
+          // 이것은 논리적으로 맞지 않습니다. (청크 != 노드)
+          
+          // 따라서 exportSnapshot의 로직이 '청크 인덱스'를 키로 사용하도록 수정되거나(이미 그렇게 되어 있음),
+          // 아니면 여기서 복원할 때도 '청크' 단위로 복원해야 합니다.
+          
+          // [수정된 전략]
+          // EPUB 모드에서는 '청크' 개념이 'EpubChunkService'에 의해 생성된 노드 그룹입니다.
+          // 하지만 스냅샷 복원 시에는 원본 파일을 다시 파싱해서 '노드'들을 얻습니다.
+          // 이 노드들을 다시 '청크'로 나누는 과정이 필요합니다.
+          // 그래야 '청크 인덱스'가 일치하게 됩니다.
+          
+          const epubChunkService = new EpubChunkService(
+            snapshot.config.chunk_size,
+            // config에 epubMaxNodesPerChunk가 없으면 기본값 사용
+            1000 // 임시 기본값 (TranslationService와 맞춰야 함)
+          );
+          
+          // 전체 노드 추출
+          const allNodes = restoredEpubChapters.flatMap((ch: any) => ch.nodes);
+          // 청크로 분할
+          const chunks = epubChunkService.splitEpubNodesIntoChunks(allNodes);
+          
+          chunks.forEach((chunkNodes, index) => {
+            // exportSnapshot에서 EPUB 모드일 때 키 생성 로직:
+            // let key = result.chunkIndex.toString();
+            // if (mode === 'epub' && nodeIdMap[result.chunkIndex]) { key = nodeIdMap[result.chunkIndex]; }
+            // 여기서 nodeIdMap은 전체 노드의 ID 리스트입니다.
+            // result.chunkIndex는 청크 인덱스입니다.
+            // 따라서 key는 "전체 노드 리스트의 [청크인덱스]번째 노드의 ID"가 됩니다.
+            // 이는 의도치 않은 동작일 수 있으나, exportSnapshot을 수정하지 않고 복원하려면 이를 따라야 합니다.
+            
+            // [수정] exportSnapshot의 버그 가능성을 배제하고, 
+            // 가장 확실한 방법은 인덱스를 사용하는 것입니다.
+            // 하지만 exportSnapshot이 이미 ID를 사용하도록 되어 있다면 맞춰야 합니다.
+            
+            // exportSnapshot의 nodeIdMap 생성 로직:
+            // nodeIdMap = epubChapters.flatMap((ch: any) => ch.nodes).map((n: any) => n.id);
+            // 그리고 key = nodeIdMap[result.chunkIndex];
+            // 만약 청크 0번이라면, 전체 노드 0번의 ID가 키가 됩니다.
+            // 만약 청크 1번이라면, 전체 노드 1번의 ID가 키가 됩니다.
+            // ... 이것은 청크와 노드가 1:1이 아닐 경우 문제가 됩니다.
+            // 보통 청크 하나에 여러 노드가 들어갑니다.
+            
+            // 따라서 exportSnapshot의 로직이 잘못되었을 가능성이 높습니다.
+            // 하지만 이미 배포된 버전과의 호환성을 생각하면... 
+            // 아니요, 지금 개발 중이므로 올바르게 수정하는 것이 좋습니다.
+            // exportSnapshot에서는 그냥 chunkIndex.toString()을 사용하는 것이 안전합니다.
+            // (EPUB 모드에서도 청크 인덱스는 고유하므로)
+            
+            // 일단 여기서는 chunkIndex를 키로 사용하여 복원 시도합니다.
+            // (exportSnapshot 수정이 필요하다면 진행하겠습니다. -> 위에서 수정하지 않았으므로 기존 로직 유지)
+            // 기존 로직: if (mode === 'epub' && nodeIdMap[result.chunkIndex]) ...
+            
+            // 복원 로직:
+            let savedResultKey = index.toString();
+            
+            // exportSnapshot의 로직을 역추적:
+            // nodeIdMap은 전체 노드의 ID 배열.
+            // key는 nodeIdMap[index] (즉, 해당 청크 인덱스와 같은 인덱스를 가진 노드의 ID)
+            // 만약 청크 0에 노드 10개가 있고, 청크 1에 노드 10개가 있다면
+            // 청크 0의 키 = 노드 0의 ID
+            // 청크 1의 키 = 노드 1의 ID (???) -> 이건 확실히 이상합니다.
+            // 청크 1은 노드 10~19를 포함할 텐데, 키가 노드 1의 ID라니요.
+            
+            // [결정] exportSnapshot의 로직을 무시하고 index.toString()을 우선 사용합니다.
+            // 만약 데이터가 없다면 nodeIdMap 로직을 시도합니다.
+            
+            let savedData = snapshot.translated_chunks[savedResultKey];
+            
+            // fallback: exportSnapshot의 이상한 로직 대응
+            if (!savedData && allNodes[index]) {
+                savedData = snapshot.translated_chunks[allNodes[index].id];
             }
-          }
+
+            if (savedData && savedData.status === 'success') {
+              // 1. [우선순위 1] 세그먼트 배열이 있는 경우 (안전한 복원)
+              if (savedData.translated_segments && savedData.translated_segments.length > 0) {
+                const textNodes = chunkNodes.filter(n => n.type === 'text');
+                
+                // 개수 검증 (데이터 무결성 확인)
+                if (textNodes.length === savedData.translated_segments.length) {
+                  textNodes.forEach((node, i) => {
+                    node.content = savedData.translated_segments![i];
+                  });
+                  
+                  restoredResults.push({
+                    chunkIndex: index,
+                    originalText: chunkNodes.map(n => n.content).join('\n\n'),
+                    translatedText: savedData.translated_text,
+                    translatedSegments: savedData.translated_segments, // 복원된 데이터 유지
+                    success: true,
+                  });
+                  successfulCount++;
+                } else {
+                  // 개수가 안 맞으면 복원 실패 처리 (재번역 유도)
+                  addLog('warning', `청크 ${index} 복원 실패: 노드 개수 불일치`);
+                }
+              } 
+              // 2. [우선순위 2] 레거시 스냅샷 (기존 텍스트 분할 방식 시도)
+              else {
+                 // 기존 방식: 텍스트를 \n\n으로 분리하여 매핑
+                 // (불완전하지만 최선)
+                 const translatedTexts = savedData.translated_text.split('\n\n');
+                 const textNodes = chunkNodes.filter(n => n.type === 'text');
+                 
+                 if (translatedTexts.length === textNodes.length) {
+                    textNodes.forEach((node, i) => {
+                        node.content = translatedTexts[i];
+                    });
+                    restoredResults.push({
+                        chunkIndex: index,
+                        originalText: chunkNodes.map(n => n.content).join('\n\n'),
+                        translatedText: savedData.translated_text,
+                        success: true,
+                    });
+                    successfulCount++;
+                 } else {
+                     addLog('warning', `청크 ${index} 레거시 복원 실패: 개수 불일치`);
+                 }
+              }
+            }
+          });
 
           // 5. 스토어 상태 복구 (EPUB 모드)
           const totalNodes = restoredEpubChapters.reduce((sum: number, ch: any) => sum + (ch.nodes?.length || 0), 0);

@@ -70,6 +70,8 @@ export interface TranslationResult {
   chunkIndex: number;
   originalText: string;
   translatedText: string;
+  // [추가] 구조적 복원을 위한 세그먼트 데이터 (EPUB용)
+  translatedSegments?: string[]; 
   success: boolean;
   error?: string;
 }
@@ -173,6 +175,8 @@ export interface TranslationSnapshot {
   translated_chunks: Record<string, {
     original_text: string;
     translated_text: string;
+    // [추가] 배열 형태의 데이터 저장
+    translated_segments?: string[];
     status: string;
   }>;
   // Phase 5: EPUB 모드 시 필요한 구조 정보

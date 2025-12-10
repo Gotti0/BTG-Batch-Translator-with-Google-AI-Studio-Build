@@ -660,7 +660,8 @@ export function TranslationPage() {
             (result) => {
               addResult(result);
             },
-            zip
+            zip,
+            results // [추가] 기존 결과 전달 (스킵 로직용)
           );
 
           addLog('info', '📚 [단계 3/4] 번역된 데이터를 EPUB 포맷으로 재조립합니다.');
