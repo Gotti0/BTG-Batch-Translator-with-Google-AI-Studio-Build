@@ -34,8 +34,7 @@ const glossaryItemSchema = z.object({
   keyword: z.string().describe("The original term exactly as it appears in the text."),
   translated_keyword: z.string().describe("The translated term in the target language (Korean). Follow the Sino-Korean reading rules unless it is a foreign transliteration."),
   target_language: z.string().describe("BCP-47 language code (e.g., 'ko')."),
-  occurrence_count: z.number().int().describe("Estimated number of times this term appears in the segment."),
-  type: z.enum(["person", "proper_noun", "place", "organization"]).optional().describe("The category of the extracted term.")
+  occurrence_count: z.number().int().describe("Estimated number of times this term appears in the segment.")
 });
 
 // 배열 형태의 응답을 받기 위한 래퍼 스키마
