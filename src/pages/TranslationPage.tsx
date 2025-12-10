@@ -9,7 +9,7 @@ import { useTranslation } from '../hooks/useTranslation';
 import { FileHandler } from '../utils/fileHandler';
 import { getGeminiClient } from '../services/GeminiClient';
 import { TranslationService } from '../services/TranslationService';
-import { DEFAULT_PREFILL_SYSTEM_INSTRUCTION, DEFAULT_PREFILL_CACHED_HISTORY } from '../types/config';
+import { DEFAULT_PREFILL_SYSTEM_INSTRUCTION, DEFAULT_PREFILL_CACHED_HISTORY, DEFAULT_PROMPTS } from '../types/config';
 import { EpubService } from '../services/EpubService';
 import JSZip from 'jszip';
 import { 
@@ -432,15 +432,39 @@ function PromptSettings() {
   const { config, updateConfig } = useSettingsStore();
   const [isExpanded, setIsExpanded] = useState(false);
 
+  // [추가] 초기화 핸들러 구현
+  const handleResetDefaults = useCallback(() => {
+    if (confirm('번역 프롬프트를 기본값으로 초기화하시겠습니까?\n현재 작성된 내용은 사라집니다.')) {
+      updateConfig({ prompts: DEFAULT_PROMPTS });
+    }
+  }, [updateConfig]);
+
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex justify-between items-center text-xl font-semibold text-gray-800"
-      >
-        <span>📝 번역 프롬프트 템플릿</span>
-        <span className="text-gray-400">{isExpanded ? '▲' : '▼'}</span>
-      </button>
+      <div className="flex justify-between items-center">
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="w-full flex justify-between items-center text-xl font-semibold text-gray-800"
+        >
+          <span>📝 번역 프롬프트 템플릿</span>
+          <span className="text-gray-400">{isExpanded ? '▲' : '▼'}</span>
+        </button>
+
+        {/* [추가] 초기화 버튼 (확장되었을 때만 보여도 되고, 항상 보여도 됨 - 여기선 항상 노출) */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={(e) => {
+            e.stopPropagation(); // 아코디언 토글 방지
+            handleResetDefaults();
+          }}
+          className="text-gray-500 hover:text-gray-700 hover:bg-gray-100 text-xs flex-shrink-0"
+          title="기본값으로 복원"
+        >
+          <RotateCcw className="w-4 h-4 mr-1" />
+          기본값 복원
+        </Button>
+        </div>
       
       {isExpanded && (
         <div className="mt-4">
