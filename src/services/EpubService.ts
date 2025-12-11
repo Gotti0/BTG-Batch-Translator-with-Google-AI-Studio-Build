@@ -475,6 +475,30 @@ export class EpubService {
     const epubData = await originalFile.arrayBuffer();
     await zip.loadAsync(epubData);
 
+    // [추가] OPF 파일 수정 (page-progression-direction="rtl" -> "ltr")
+    // 일본어/중국어 세로쓰기(RTL) 설정을 가로쓰기(LTR)로 변경
+    try {
+      const containerXml = await this.readFileFromZip(zip, 'META-INF/container.xml');
+      const opfPath = this.extractOPFPath(containerXml);
+      
+      if (opfPath) {
+        let opfContent = await this.readFileFromZip(zip, opfPath);
+        
+        // 정규식으로 page-progression-direction="rtl" 찾아서 "ltr"로 변경
+        // 예: <spine page-progression-direction="rtl" toc="ncx">
+        if (opfContent.includes('page-progression-direction="rtl"')) {
+            opfContent = opfContent.replace(
+                /(page-progression-direction=["'])rtl(["'])/gi, 
+                '$1ltr$2'
+            );
+            zip.file(opfPath, opfContent);
+            console.log('✅ OPF page-progression-direction updated to LTR');
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ OPF direction update failed:', e);
+    }
+
     // 챕터별로 XHTML 파일 업데이트
     for (const chapter of chapters) {
       const xhtmlContent = this.reconstructXhtml(chapter.nodes, chapter.head);

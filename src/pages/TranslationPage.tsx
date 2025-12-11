@@ -700,14 +700,46 @@ export function TranslationPage() {
 
           // EPUB 재조립
           const epubService = new EpubService();
-          let nodeIndex = 0;
+          
+          // [수정] 단순 슬라이싱 대신 ID 기반으로 노드를 챕터에 분배
+          // (이미지 주석 생성 등으로 노드 수가 변경되었을 때 밀림 현상 방지)
           const translatedChapters = epubFile.epubChapters.map((chapter: any) => ({
             ...chapter,
-            nodes: translatedNodes.slice(
-              nodeIndex,
-              (nodeIndex += chapter.nodes.length)
-            ),
+            nodes: [] as any[]
           }));
+
+          let currentChapterIndex = 0;
+          
+          for (const node of translatedNodes) {
+            // 현재 챕터 가져오기
+            let currentChapter = translatedChapters[currentChapterIndex];
+            
+            // 노드 ID가 현재 챕터 파일명으로 시작하는지 확인
+            // (ID 형식: {fileName}_{index} 또는 {fileName}_title)
+            const expectedPrefix = `${currentChapter.fileName}_`;
+            
+            if (!node.id.startsWith(expectedPrefix)) {
+              // 현재 챕터와 매칭되지 않으면, 다음 챕터들 중에서 매칭되는 챕터 찾기
+              let foundNext = false;
+              for (let i = currentChapterIndex + 1; i < translatedChapters.length; i++) {
+                if (node.id.startsWith(`${translatedChapters[i].fileName}_`)) {
+                  currentChapterIndex = i;
+                  currentChapter = translatedChapters[i];
+                  foundNext = true;
+                  break;
+                }
+              }
+              
+              if (!foundNext) {
+                // 매칭되는 챕터를 찾지 못한 경우 (예외 상황)
+                // 로그를 남기고 현재 챕터에 포함시키거나, 이전 챕터의 잔여물로 간주
+                // 여기서는 안전하게 현재 챕터에 포함시킴
+                // console.warn(`Node ID mismatch: ${node.id} (Current: ${currentChapter.fileName})`);
+              }
+            }
+            
+            translatedChapters[currentChapterIndex].nodes.push(node);
+          }
 
           const epubBlob = await epubService.generateEpubBlob(epubFile.epubFile, translatedChapters);
           
