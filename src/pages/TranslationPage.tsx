@@ -930,7 +930,7 @@ export function TranslationPage() {
       
       {/* 액션 버튼 */}
       <div className="flex gap-4">
-        {!isRunning ? (
+        {!isRunning && !isEpubTranslating ? (
           <>
             <Button
               variant="primary"
