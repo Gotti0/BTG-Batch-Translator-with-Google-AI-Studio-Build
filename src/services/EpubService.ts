@@ -50,8 +50,26 @@ export class EpubService {
 
       // 4. Spine 순서에 따라 XHTML 파일 파싱
       const chapters: EpubChapter[] = [];
+      
+      // [수정] Spine에 포함되지 않은 Nav 파일도 찾아서 추가해야 함
+      // EPUB3에서는 properties="nav" 속성을 가진 아이템이 목차 파일임
+      const navItem = manifestItems.find(item => {
+        // properties 속성은 extractManifestItems에서 추출하지 않았으므로, 
+        // href나 id로 추측하거나 extractManifestItems를 수정해야 함.
+        // 여기서는 간단히 href에 'nav'가 포함되거나 id가 'nav', 'toc'인 경우를 체크
+        return item.href.toLowerCase().includes('nav') || item.id.toLowerCase().includes('nav') || item.id.toLowerCase() === 'toc';
+      });
 
-      for (const idref of spineItemrefs) {
+      // Spine 목록 복사
+      const itemsToProcess = [...spineItemrefs];
+      
+      // Nav 파일이 Spine에 없다면 추가 (보통 맨 앞에 위치시키는 것이 좋음)
+      if (navItem && !spineItemrefs.includes(navItem.id)) {
+        console.log(`📌 Spine에 없는 Nav 파일 발견: ${navItem.id} (${navItem.href})`);
+        itemsToProcess.unshift(navItem.id);
+      }
+
+      for (const idref of itemsToProcess) {
         const manifestItem = manifestItems.find((item) => item.id === idref);
         if (!manifestItem || !manifestItem.href.endsWith('.xhtml')) {
           continue;
