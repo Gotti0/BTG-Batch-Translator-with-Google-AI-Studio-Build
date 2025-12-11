@@ -537,40 +537,74 @@ export function useTranslation() {
           const allNodes = restoredEpubChapters.flatMap((ch: any) => ch.nodes);
           const newChunks = epubChunkService.splitEpubNodesIntoChunks(allNodes);
           
-          // 4-3. 세그먼트 매핑
+          // 4-3. 세그먼트 매핑 전략 결정 및 실행
           let segmentOffset = 0;
           
+          // 전략 감지: 첫 번째 청크를 기준으로 판단
+          // 스냅샷의 세그먼트 개수가 해당 청크의 '전체 노드 수'와 일치하는지, '텍스트 노드 수'와 일치하는지 확인
+          let isAllNodesMode = true; // 기본값: 모든 노드 포함 (현재 방식)
+          
+          if (newChunks.length > 0 && sortedKeys.length > 0) {
+             const firstChunkIdx = sortedKeys[0];
+             // newChunks[firstChunkIdx]가 존재한다고 가정 (인덱스가 0부터 시작하므로)
+             if (firstChunkIdx < newChunks.length) {
+                 const sampleChunk = newChunks[firstChunkIdx];
+                 const sampleSnapshotData = snapshot.translated_chunks[firstChunkIdx.toString()];
+                 
+                 if (sampleSnapshotData && sampleSnapshotData.translated_segments) {
+                     const segmentLen = sampleSnapshotData.translated_segments.length;
+                     const totalLen = sampleChunk.length;
+                     const textLen = sampleChunk.filter((n: any) => n.type === 'text').length;
+                     
+                     if (segmentLen === textLen && segmentLen !== totalLen) {
+                         isAllNodesMode = false;
+                         addLog('info', '매핑 전략: 텍스트 노드 전용 모드 감지');
+                     } else {
+                         addLog('info', '매핑 전략: 전체 노드 모드 감지 (비텍스트 포함)');
+                     }
+                 }
+             }
+          }
+
           for (let i = 0; i < newChunks.length; i++) {
              const chunk = newChunks[i];
              const chunkTextNodes = chunk.filter((n: any) => n.type === 'text');
              
+             // 필요한 세그먼트 개수 계산
+             const requiredSegments = isAllNodesMode ? chunk.length : chunkTextNodes.length;
+             
              // 현재 청크를 채울 만큼 세그먼트가 충분한지 확인
-             if (segmentOffset + chunkTextNodes.length <= allSegments.length) {
-                const chunkSegments = allSegments.slice(segmentOffset, segmentOffset + chunkTextNodes.length);
+             if (segmentOffset + requiredSegments <= allSegments.length) {
+                const chunkSegments = allSegments.slice(segmentOffset, segmentOffset + requiredSegments);
                 
                 // 원본 텍스트 구성
                 const originalText = chunk.map((n: any) => n.content || '').join('\n\n');
                 
-                // 번역된 텍스트 구성 (비텍스트 노드는 원본 유지, 텍스트 노드는 번역본 사용)
-                // 주의: TranslationResult.translatedText는 전체 텍스트의 결합본이어야 함
                 let segmentIdx = 0;
                 const translatedParts = chunk.map((n: any) => {
-                    if (n.type === 'text') {
-                        return chunkSegments[segmentIdx++];
+                    if (isAllNodesMode) {
+                        // 전체 노드 모드: 노드 타입 상관없이 1:1 매핑
+                        return chunkSegments[segmentIdx++] || '';
+                    } else {
+                        // 텍스트 노드 모드: 텍스트 노드일 때만 세그먼트 소비
+                        if (n.type === 'text') {
+                            return chunkSegments[segmentIdx++] || '';
+                        }
+                        return n.content || ''; // 비텍스트는 원본 유지
                     }
-                    return n.content || '';
                 });
+                
                 const translatedText = translatedParts.join('\n\n');
 
                 restoredResults.push({
                    chunkIndex: i,
                    originalText: originalText,
                    translatedText: translatedText,
-                   translatedSegments: chunkSegments,
+                   translatedSegments: chunkSegments, // 원본 세그먼트 보존
                    success: true
                 });
                 
-                segmentOffset += chunkTextNodes.length;
+                segmentOffset += requiredSegments;
                 successfulCount++;
              } else {
                 // 세그먼트 부족으로 중단 (나머지는 미번역 상태로 남음)
