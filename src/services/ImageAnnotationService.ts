@@ -173,7 +173,10 @@ export class ImageAnnotationService {
             attributes: {
               class: 'image-annotation',
               title: 'AI Annotation',
-              style: 'color: gray; font-size: 0.9em; margin-top: 5px;'
+              // [수정] font-size: 0.9em -> 14px (절대 단위 사용)
+              // 일부 EPUB(일러스트 페이지 등)은 body { font-size: 0; } 설정이 있어
+              // 상대 단위(em) 사용 시 텍스트가 보이지 않는 문제 해결
+              style: 'color: gray; font-size: 14px; line-height: 1.4; margin-top: 5px;'
             }
           };
 
