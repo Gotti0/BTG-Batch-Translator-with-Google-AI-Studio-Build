@@ -1,8 +1,9 @@
+
 // pages/TranslationPage.tsx
 // 설정 및 번역 페이지
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { Play, Square, Save, Upload, Settings, Zap, Download, RefreshCw, RotateCcw, FileJson, BookOpen, CheckCircle } from 'lucide-react';
+import { Play, Square, Save, Upload, Settings, Zap, Download, RefreshCw, RotateCcw, FileJson, BookOpen, CheckCircle, FileText } from 'lucide-react';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTranslationStore } from '../stores/translationStore';
 import { useTranslation } from '../hooks/useTranslation';
@@ -105,7 +106,8 @@ function FileUploadSection({ onImportSnapshot, mode, onEpubChaptersChange, onMod
     onEpubChaptersChange([]);
   }, [removeInputFile, onEpubChaptersChange]);
 
-  const handleClearAll = useCallback(() => {
+  const handleClearAll = useCallback((e: React.MouseEvent) => {
+    e.preventDefault(); // 기본 이벤트 방지
     clearInputFiles();
     onEpubChaptersChange([]);
   }, [clearInputFiles, onEpubChaptersChange]);
@@ -157,6 +159,7 @@ function FileUploadSection({ onImportSnapshot, mode, onEpubChaptersChange, onMod
             variant="danger"
             size="sm"
             onClick={handleClearAll}
+            type="button"
           >
             전체 삭제
           </Button>
@@ -263,7 +266,7 @@ function PrefillSettingsEditor() {
 /**
  * 번역 설정 컴포넌트
  */
-function TranslationSettings() {
+function TranslationSettings({ mode }: { mode: 'text' | 'epub' }) {
   const { config, updateConfig } = useSettingsStore();
   const [modelOptions, setModelOptions] = useState<{ value: string; label: string }[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
@@ -309,124 +312,182 @@ function TranslationSettings() {
     <div className="bg-white rounded-lg shadow p-6">
       <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
         <Settings className="w-5 h-5" />
-        번역 설정
+        번역 설정 ({mode === 'text' ? '텍스트 모드' : 'EPUB 모드'})
       </h2>
       
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* 모델 선택 */}
-        <Select
-          label={isLoadingModels ? "모델 (목록 로딩 중...)" : "모델"}
-          value={config.modelName}
-          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateConfig({ modelName: e.target.value })}
-          options={modelOptions}
-          disabled={isLoadingModels}
-        />
-
-        {/* 청크 크기 */}
-        <Input
-          type="number"
-          label="청크 크기 (글자)"
-          value={config.chunkSize}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ chunkSize: parseInt(e.target.value) || 6000 })}
-          min={1000}
-          max={50000}
-        />
-
-        {/* Temperature */}
-        <Slider
-          label="Temperature"
-          value={config.temperature}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ temperature: parseFloat(e.target.value) })}
-          min={0}
-          max={2}
-          step={0.1}
-          formatValue={(v: number) => v.toFixed(1)}
-        />
-
-        {/* RPM */}
-        <Input
-          type="number"
-          label="분당 요청 수 (RPM)"
-          value={config.requestsPerMinute}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ requestsPerMinute: parseFloat(e.target.value) || 10 })}
-          min={1}
-          max={100}
-        />
-
-        {/* Max Workers */}
-        <Input
-          type="number"
-          label="동시 작업 수 (Max Workers)"
-          value={config.maxWorkers || 1}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ maxWorkers: Math.max(1, parseInt(e.target.value) || 1) })}
-          min={1}
-          max={20}
-          helperText="병렬로 처리할 청크 수입니다. 속도는 빨라지지만 브라우저 부하가 늘어날 수 있습니다."
-        />
-
-        {/* 프리필 모드 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* === 공통 설정: 모델 선택 === */}
         <div className="md:col-span-2">
-          <Checkbox
-            label="프리필 번역 모드 사용 (Prefill Translation)"
-            checked={config.enablePrefillTranslation}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ enablePrefillTranslation: e.target.checked })}
-            description="더 자연스러운 번역을 위해 사전 학습된 컨텍스트(페르소나)를 사용합니다."
+          <Select
+            label={isLoadingModels ? "모델 (목록 로딩 중...)" : "모델"}
+            value={config.modelName}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateConfig({ modelName: e.target.value })}
+            options={modelOptions}
+            disabled={isLoadingModels}
           />
-          
-          {/* 프리필 상세 설정 에디터 */}
-          {config.enablePrefillTranslation && <PrefillSettingsEditor />}
         </div>
 
-        {/* 용어집 주입 */}
-        <div className="md:col-span-2">
-          <Checkbox
-            label="동적 용어집 주입 (Dynamic Glossary Injection)"
-            checked={config.enableDynamicGlossaryInjection}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ enableDynamicGlossaryInjection: e.target.checked })}
-            description="번역 시 용어집 항목을 프롬프트에 자동으로 포함합니다."
-          />
-          
-          {/* 용어집 주입 상세 설정 */}
-          {config.enableDynamicGlossaryInjection && (
-            <div className="mt-4 p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-4 animate-fadeIn">
-              <div className="flex items-center gap-2 mb-2">
-                <Settings className="w-4 h-4 text-gray-500" />
-                <h3 className="text-sm font-semibold text-gray-700">용어집 주입 상세 설정</h3>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* === 동적 UI 분기점 === */}
+        
+        {/* Case 1: 텍스트 모드 전용 설정 */}
+        {mode === 'text' && (
+          <div className="md:col-span-2 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+             <div className="flex items-center gap-2 mb-3">
+                <FileText className="w-4 h-4 text-blue-600" />
+                <h3 className="font-medium text-gray-800">텍스트 분할 설정</h3>
+             </div>
+             <Input
+              type="number"
+              label="청크 크기 (Chunk Size)"
+              value={config.chunkSize}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ chunkSize: parseInt(e.target.value) || 6000 })}
+              min={1000}
+              max={50000}
+              step={1000}
+              helperText="한 번에 번역할 최대 글자 수입니다. 문맥 유지를 위해 적절한 크기를 설정하세요."
+            />
+          </div>
+        )}
+
+        {/* Case 2: EPUB 모드 전용 설정 */}
+        {mode === 'epub' && (
+          <div className="md:col-span-2 space-y-4">
+            {/* EPUB 주요 파라미터: 노드 개수 */}
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center gap-2 mb-3">
+                    <BookOpen className="w-4 h-4 text-blue-600" />
+                    <h3 className="font-medium text-blue-900">EPUB 구조 설정 (주요 파라미터)</h3>
+                </div>
                 <Input
-                  type="number"
-                  label="청크당 최대 주입 항목 수"
-                  value={config.maxGlossaryEntriesPerChunkInjection}
-                  onChange={(e) => updateConfig({ maxGlossaryEntriesPerChunkInjection: parseInt(e.target.value) || 0 })}
-                  min={0}
-                  helperText="한 번의 번역 요청에 포함할 최대 용어 수입니다."
+                    type="number"
+                    label="청크당 최대 노드 수 (Max Nodes per Chunk)"
+                    value={config.epubMaxNodesPerChunk}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ epubMaxNodesPerChunk: parseInt(e.target.value) || 30 })}
+                    min={5}
+                    max={100}
+                    helperText="한 번에 묶어서 보낼 최대 문단(HTML 태그) 개수입니다. JSON 구조 오류를 방지하려면 이 값을 조절하세요."
                 />
-                <Input
-                  type="number"
-                  label="청크당 최대 주입 글자 수"
-                  value={config.maxGlossaryCharsPerChunkInjection}
-                  onChange={(e) => updateConfig({ maxGlossaryCharsPerChunkInjection: parseInt(e.target.value) || 0 })}
-                  min={0}
-                  helperText="용어집 컨텍스트가 차지할 수 있는 최대 글자 수입니다."
-                />
-              </div>
-              <div className="text-xs text-gray-500">
-                * 프롬프트 길이 제한을 초과하지 않도록 적절한 값을 설정하세요. 설정된 제한을 넘는 경우 등장 빈도가 높은 순으로 잘립니다.
-              </div>
             </div>
-          )}
+
+            {/* EPUB 보조 파라미터: 글자 수 제한 */}
+            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                 <div className="flex items-center gap-2 mb-3">
+                    <Zap className="w-4 h-4 text-gray-500" />
+                    <h3 className="font-medium text-gray-600">안전 장치 (Safety Limit)</h3>
+                </div>
+                <Input
+                    type="number"
+                    label="최대 글자 수 제한 (Character Limit)"
+                    value={config.chunkSize}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ chunkSize: parseInt(e.target.value) || 6000 })}
+                    min={1000}
+                    max={50000}
+                    step={1000}
+                    helperText="노드 개수가 적더라도 글자 수가 이 값을 넘으면 강제로 분할합니다. (토큰 제한 방지)"
+                />
+            </div>
+          </div>
+        )}
+
+        {/* === 공통 고급 설정 === */}
+        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t">
+            {/* Temperature */}
+            <Slider
+              label="창의성 (Temperature)"
+              value={config.temperature}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ temperature: parseFloat(e.target.value) })}
+              min={0}
+              max={2}
+              step={0.1}
+              formatValue={(v: number) => v.toFixed(1)}
+            />
+
+            {/* RPM */}
+            <Input
+              type="number"
+              label="분당 요청 수 (RPM)"
+              value={config.requestsPerMinute}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ requestsPerMinute: parseFloat(e.target.value) || 10 })}
+              min={1}
+              max={100}
+            />
+            
+            {/* Max Workers */}
+            <div className="md:col-span-2">
+                <Input
+                  type="number"
+                  label="동시 작업 수 (Max Workers)"
+                  value={config.maxWorkers || 1}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ maxWorkers: Math.max(1, parseInt(e.target.value) || 1) })}
+                  min={1}
+                  max={20}
+                  helperText="병렬 처리 개수입니다. 속도는 빨라지지만 브라우저 부하가 늘어날 수 있습니다."
+                />
+            </div>
         </div>
 
-        {/* 이미지 주석 생성 */}
+        {/* EPUB 모드일 때만 이미지 주석 옵션 표시 */}
+        {mode === 'epub' && (
+            <div className="md:col-span-2">
+              <Checkbox
+                  label="EPUB 이미지 AI 주석 생성 (Image Annotation)"
+                  checked={config.enableImageAnnotation}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ enableImageAnnotation: e.target.checked })}
+                  description="이미지를 분석하여 텍스트 설명을 추가합니다. (Gemini Vision 모델 필요)"
+              />
+            </div>
+        )}
+        
+        {/* 텍스트/EPUB 공통 옵션 */}
         <div className="md:col-span-2">
-          <Checkbox
-            label="EPUB 이미지 AI 주석 생성 (Image Annotation)"
-            checked={config.enableImageAnnotation}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ enableImageAnnotation: e.target.checked })}
-            description="EPUB 내의 이미지를 분석하여 AI가 설명을 생성하고 텍스트로 추가합니다. (Gemini Vision 모델 필요)"
-          />
+             <Checkbox
+                label="프리필 번역 모드 사용 (Prefill Translation)"
+                checked={config.enablePrefillTranslation}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ enablePrefillTranslation: e.target.checked })}
+                description="더 자연스러운 번역을 위해 사전 학습된 컨텍스트(페르소나)를 사용합니다."
+             />
+             {config.enablePrefillTranslation && <PrefillSettingsEditor />}
+             
+             <div className="mt-4">
+                <Checkbox
+                    label="동적 용어집 주입 (Dynamic Glossary Injection)"
+                    checked={config.enableDynamicGlossaryInjection}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ enableDynamicGlossaryInjection: e.target.checked })}
+                    description="번역 시 용어집 항목을 프롬프트에 자동으로 포함합니다."
+                />
+                
+                {config.enableDynamicGlossaryInjection && (
+                  <div className="mt-4 p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-4 animate-fadeIn">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Settings className="w-4 h-4 text-gray-500" />
+                      <h3 className="text-sm font-semibold text-gray-700">용어집 주입 상세 설정</h3>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <Input
+                        type="number"
+                        label="청크당 최대 주입 항목 수"
+                        value={config.maxGlossaryEntriesPerChunkInjection}
+                        onChange={(e) => updateConfig({ maxGlossaryEntriesPerChunkInjection: parseInt(e.target.value) || 0 })}
+                        min={0}
+                        helperText="한 번의 번역 요청에 포함할 최대 용어 수입니다."
+                      />
+                      <Input
+                        type="number"
+                        label="청크당 최대 주입 글자 수"
+                        value={config.maxGlossaryCharsPerChunkInjection}
+                        onChange={(e) => updateConfig({ maxGlossaryCharsPerChunkInjection: parseInt(e.target.value) || 0 })}
+                        min={0}
+                        helperText="용어집 컨텍스트가 차지할 수 있는 최대 글자 수입니다."
+                      />
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      * 프롬프트 길이 제한을 초과하지 않도록 적절한 값을 설정하세요. 설정된 제한을 넘는 경우 등장 빈도가 높은 순으로 잘립니다.
+                    </div>
+                  </div>
+                )}
+             </div>
         </div>
+
       </div>
     </div>
   );
@@ -853,7 +914,7 @@ export function TranslationPage() {
       <FileUploadSection onImportSnapshot={importSnapshot} mode={mode} onEpubChaptersChange={setEpubChapters} onModeChange={setMode} epubChapters={epubChapters} />
       
       {/* 번역 설정 */}
-      <TranslationSettings />
+      <TranslationSettings mode={mode} />
       
       {/* 프롬프트 설정 */}
       <PromptSettings />
