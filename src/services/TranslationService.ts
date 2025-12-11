@@ -1198,19 +1198,36 @@ export class TranslationService {
     
     // 1. [권장] 세그먼트 배열이 있는 경우 (완벽한 복원)
     if (result.translatedSegments && result.translatedSegments.length > 0) {
-      if (textNodes.length !== result.translatedSegments.length) {
-        return null; // 개수 불일치 -> 복원 실패
+      const segments = result.translatedSegments;
+      
+      // 전략 1: 텍스트 노드 개수와 세그먼트 개수가 일치하는 경우 (텍스트 노드만 저장된 경우)
+      if (textNodes.length === segments.length) {
+        const newNodes = JSON.parse(JSON.stringify(nodes));
+        const newTextNodes = newNodes.filter((n: EpubNode) => n.type === 'text');
+
+        newTextNodes.forEach((node: EpubNode, idx: number) => {
+          node.content = segments[idx];
+        });
+        return newNodes;
       }
       
-      // 원본 노드 배열을 깊은 복사하여 안전하게 처리
-      const newNodes = JSON.parse(JSON.stringify(nodes));
-      const newTextNodes = newNodes.filter((n: EpubNode) => n.type === 'text');
+      // 전략 2: 전체 노드 개수와 세그먼트 개수가 일치하는 경우 (비텍스트 포함 저장된 경우)
+      if (nodes.length === segments.length) {
+        const newNodes = JSON.parse(JSON.stringify(nodes));
+        
+        newNodes.forEach((node: EpubNode, idx: number) => {
+          // 텍스트 노드인 경우에만 내용을 덮어씀 (비텍스트는 원본 유지하거나, 저장된 값 사용)
+          // 저장된 값이 공백("")인 경우가 많으므로, 텍스트 노드일 때만 적용하는 것이 안전함
+          if (node.type === 'text') {
+             node.content = segments[idx];
+          }
+        });
+        return newNodes;
+      }
 
-      newTextNodes.forEach((node: EpubNode, idx: number) => {
-        node.content = result.translatedSegments![idx];
-      });
-      
-      return newNodes;
+      // 개수 불일치 -> 복원 실패
+      this.log('warning', `복원 실패 상세: 노드(${nodes.length}개) / 텍스트노드(${textNodes.length}개) vs 저장된 세그먼트(${segments.length}개)`);
+      return null; 
     }
 
     // 2. [차선] 텍스트만 있는 경우 (\n\n 분할 시도)
