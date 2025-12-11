@@ -993,12 +993,12 @@ export class TranslationService {
       topP: this.config.topP,
       responseMimeType: 'application/json',
       responseJsonSchema: {
-        type: 'ARRAY',
+        type: 'array',
         items: {
-          type: 'OBJECT',
+          type: 'object',
           properties: {
-            id: { type: 'STRING' },
-            translated_text: { type: 'STRING' },
+            id: { type: 'string' },
+            translated_text: { type: 'string' },
           },
           required: ['id', 'translated_text'],
         },
