@@ -423,7 +423,7 @@ export function useTranslation() {
   /**
    * 스냅샷(JSON) 파일을 불러와 작업 복구
    */
-  const importSnapshot = useCallback(async (file: File) => {
+  const importSnapshot = useCallback(async (file: File): Promise<{ mode: string; epubChapters?: any[] } | void> => {
     try {
       const text = await file.text();
       const snapshot: TranslationSnapshot = JSON.parse(text);
@@ -630,7 +630,7 @@ export function useTranslation() {
           // Phase 5: 사용자에게 EPUB 모드 복구 알림
           addLog('info', `🎉 EPUB 스냅샷 복구 완료. 현재 모드: EPUB 번역`);
 
-          return snapshotMode; // 호출자에서 모드 설정 가능
+          return { mode: snapshotMode, epubChapters: restoredEpubChapters }; // 호출자에서 모드 설정 가능
         } catch (error) {
           addLog('error', `EPUB 복구 실패: ${error instanceof Error ? error.message : 'Unknown error'}`);
           // 실패 시 텍스트 모드로 폴백
@@ -685,7 +685,7 @@ export function useTranslation() {
       addLog('info', '번역 시작 버튼을 누르면 나머지 구간부터 작업을 이어갑니다.');
       
       // Phase 5: 복구된 모드 반환 (호출자가 mode 상태 업데이트 가능)
-      return snapshotMode;
+      return { mode: snapshotMode };
 
     } catch (error) {
       addLog('error', `스냅샷 불러오기 실패: ${error}`);

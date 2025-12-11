@@ -28,7 +28,7 @@ import type { FileContent } from '../types/dtos';
 /**
  * 파일 업로드 영역 컴포넌트
  */
-function FileUploadSection({ onImportSnapshot, mode, onEpubChaptersChange, onModeChange, epubChapters }: { onImportSnapshot: (file: File) => Promise<string | void>; mode: 'text' | 'epub'; onEpubChaptersChange: (chapters: any[]) => void; onModeChange: (mode: 'text' | 'epub') => void; epubChapters: any[] }) {
+function FileUploadSection({ onImportSnapshot, mode, onEpubChaptersChange, onModeChange, epubChapters }: { onImportSnapshot: (file: File) => Promise<{ mode: string; epubChapters?: any[] } | void>; mode: 'text' | 'epub'; onEpubChaptersChange: (chapters: any[]) => void; onModeChange: (mode: 'text' | 'epub') => void; epubChapters: any[] }) {
   const { inputFiles, addInputFiles, removeInputFile, clearInputFiles, addLog } = useTranslationStore();
   
   // File 객체를 FileContent로 변환하여 스토어에 추가 또는 스냅샷 복구
@@ -40,11 +40,18 @@ function FileUploadSection({ onImportSnapshot, mode, onEpubChaptersChange, onMod
       // JSON 파일(스냅샷) 감지
       if (file.name.endsWith('.json')) {
         addLog('info', `스냅샷 파일 감지: ${file.name}`);
-        const restoredMode = await onImportSnapshot(file);
+        const result = await onImportSnapshot(file);
         // Phase 5: 스냅샷의 모드가 반환되면 자동으로 모드 전환
-        if (restoredMode) {
-          onModeChange(restoredMode as 'text' | 'epub');
-          addLog('info', `📋 모드 자동 변경: ${restoredMode}`);
+        if (result && result.mode) {
+          onModeChange(result.mode as 'text' | 'epub');
+          
+          // EPUB 챕터 정보가 있으면 업데이트
+          if (result.mode === 'epub' && result.epubChapters) {
+             onEpubChaptersChange(result.epubChapters);
+             addLog('info', `📚 EPUB 챕터 정보 복원됨: ${result.epubChapters.length}개`);
+          }
+
+          addLog('info', `📋 모드 자동 변경: ${result.mode}`);
         }
         snapshotFound = true;
         return; 
