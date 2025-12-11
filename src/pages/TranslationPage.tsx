@@ -631,6 +631,9 @@ export function TranslationPage() {
   const [epubDownloadUrl, setEpubDownloadUrl] = useState<string | null>(null);
   const [epubDownloadName, setEpubDownloadName] = useState<string>('');
   const [isEpubTranslating, setIsEpubTranslating] = useState(false);
+  
+  // [추가] EPUB 번역 서비스 인스턴스 참조 (중단 기능을 위해 필요)
+  const epubServiceRef = React.useRef<TranslationService | null>(null);
 
   const {
     inputFiles,
@@ -660,6 +663,8 @@ export function TranslationPage() {
         
         try {
           const translationService = new TranslationService(config);
+          // [추가] 서비스 인스턴스 저장 (중단용)
+          epubServiceRef.current = translationService;
           
           // 이미지 주석 처리 준비
           let zip: JSZip | undefined;
@@ -766,8 +771,18 @@ export function TranslationPage() {
   }, [mode, inputFiles, executeTranslation, addLog, config]);
 
   const handleStopTranslation = useCallback(() => {
-    cancelTranslation();
-  }, [cancelTranslation]);
+    if (mode === 'epub') {
+      // EPUB 모드 중단 처리
+      if (epubServiceRef.current) {
+        epubServiceRef.current.requestStop();
+        addLog('warning', 'EPUB 번역이 사용자에 의해 중단되었습니다.');
+      }
+      setIsEpubTranslating(false);
+    } else {
+      // 텍스트 모드 중단 처리
+      cancelTranslation();
+    }
+  }, [mode, cancelTranslation, addLog]);
 
   const handleRetryFailed = useCallback(() => {
     retryFailedChunks();
@@ -905,7 +920,7 @@ export function TranslationPage() {
               <p className="text-gray-500">
                 {isRunning || isEpubTranslating ? 'EPUB 번역이 진행 중입니다... 로그 탭을 확인하세요.' : '번역을 시작하면 결과가 여기에 표시됩니다.'}
               </p>
-            )}
+            )}&& !isEpubTranslating 
           </div>
         ) : (
           /* 기존 텍스트 모드 미리보기 (ResultPreview 컴포넌트 내용) */

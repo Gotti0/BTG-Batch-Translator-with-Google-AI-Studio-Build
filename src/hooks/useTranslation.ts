@@ -540,7 +540,7 @@ export function useTranslation() {
           const epubChunkService = new EpubChunkService(
             snapshot.config.chunk_size,
             // config에 epubMaxNodesPerChunk가 없으면 기본값 사용
-            1000 // 임시 기본값 (TranslationService와 맞춰야 함)
+            30 // [수정] 기본값 30으로 설정 (EpubChunkService 기본값과 일치)
           );
           
           // 전체 노드 추출
@@ -550,52 +550,14 @@ export function useTranslation() {
           
           chunks.forEach((chunkNodes, index) => {
             // exportSnapshot에서 EPUB 모드일 때 키 생성 로직:
-            // let key = result.chunkIndex.toString();
-            // if (mode === 'epub' && nodeIdMap[result.chunkIndex]) { key = nodeIdMap[result.chunkIndex]; }
-            // 여기서 nodeIdMap은 전체 노드의 ID 리스트입니다.
-            // result.chunkIndex는 청크 인덱스입니다.
-            // 따라서 key는 "전체 노드 리스트의 [청크인덱스]번째 노드의 ID"가 됩니다.
-            // 이는 의도치 않은 동작일 수 있으나, exportSnapshot을 수정하지 않고 복원하려면 이를 따라야 합니다.
-            
-            // [수정] exportSnapshot의 버그 가능성을 배제하고, 
-            // 가장 확실한 방법은 인덱스를 사용하는 것입니다.
-            // 하지만 exportSnapshot이 이미 ID를 사용하도록 되어 있다면 맞춰야 합니다.
-            
-            // exportSnapshot의 nodeIdMap 생성 로직:
-            // nodeIdMap = epubChapters.flatMap((ch: any) => ch.nodes).map((n: any) => n.id);
-            // 그리고 key = nodeIdMap[result.chunkIndex];
-            // 만약 청크 0번이라면, 전체 노드 0번의 ID가 키가 됩니다.
-            // 만약 청크 1번이라면, 전체 노드 1번의 ID가 키가 됩니다.
-            // ... 이것은 청크와 노드가 1:1이 아닐 경우 문제가 됩니다.
-            // 보통 청크 하나에 여러 노드가 들어갑니다.
-            
-            // 따라서 exportSnapshot의 로직이 잘못되었을 가능성이 높습니다.
-            // 하지만 이미 배포된 버전과의 호환성을 생각하면... 
-            // 아니요, 지금 개발 중이므로 올바르게 수정하는 것이 좋습니다.
-            // exportSnapshot에서는 그냥 chunkIndex.toString()을 사용하는 것이 안전합니다.
-            // (EPUB 모드에서도 청크 인덱스는 고유하므로)
-            
-            // 일단 여기서는 chunkIndex를 키로 사용하여 복원 시도합니다.
-            // (exportSnapshot 수정이 필요하다면 진행하겠습니다. -> 위에서 수정하지 않았으므로 기존 로직 유지)
-            // 기존 로직: if (mode === 'epub' && nodeIdMap[result.chunkIndex]) ...
+            // 이제 exportSnapshot은 항상 chunkIndex.toString()을 사용합니다.
             
             // 복원 로직:
             let savedResultKey = index.toString();
             
-            // exportSnapshot의 로직을 역추적:
-            // nodeIdMap은 전체 노드의 ID 배열.
-            // key는 nodeIdMap[index] (즉, 해당 청크 인덱스와 같은 인덱스를 가진 노드의 ID)
-            // 만약 청크 0에 노드 10개가 있고, 청크 1에 노드 10개가 있다면
-            // 청크 0의 키 = 노드 0의 ID
-            // 청크 1의 키 = 노드 1의 ID (???) -> 이건 확실히 이상합니다.
-            // 청크 1은 노드 10~19를 포함할 텐데, 키가 노드 1의 ID라니요.
-            
-            // [결정] exportSnapshot의 로직을 무시하고 index.toString()을 우선 사용합니다.
-            // 만약 데이터가 없다면 nodeIdMap 로직을 시도합니다.
-            
             let savedData = snapshot.translated_chunks[savedResultKey];
             
-            // fallback: exportSnapshot의 이상한 로직 대응
+            // fallback: 구버전 스냅샷 호환성 (노드 ID를 키로 사용했던 경우)
             if (!savedData && allNodes[index]) {
                 savedData = snapshot.translated_chunks[allNodes[index].id];
             }
@@ -606,6 +568,10 @@ export function useTranslation() {
                 const textNodes = chunkNodes.filter(n => n.type === 'text');
                 
                 // 개수 검증 (데이터 무결성 확인)
+                // 주의: 이미지 주석 등으로 인해 노드 수가 달라질 수 있으나, 
+                // 스냅샷 복원 시점에는 원본 상태이므로 개수가 맞아야 함.
+                // 만약 안 맞으면... 최대한 맞춰서 복원
+                
                 if (textNodes.length === savedData.translated_segments.length) {
                   textNodes.forEach((node, i) => {
                     node.content = savedData.translated_segments![i];
@@ -621,7 +587,7 @@ export function useTranslation() {
                   successfulCount++;
                 } else {
                   // 개수가 안 맞으면 복원 실패 처리 (재번역 유도)
-                  addLog('warning', `청크 ${index} 복원 실패: 노드 개수 불일치`);
+                  addLog('warning', `청크 ${index} 복원 실패: 노드 개수 불일치 (저장됨: ${savedData.translated_segments.length}, 현재: ${textNodes.length})`);
                 }
               } 
               // 2. [우선순위 2] 레거시 스냅샷 (기존 텍스트 분할 방식 시도)
@@ -650,13 +616,13 @@ export function useTranslation() {
           });
 
           // 5. 스토어 상태 복구 (EPUB 모드)
-          const totalNodes = restoredEpubChapters.reduce((sum: number, ch: any) => sum + (ch.nodes?.length || 0), 0);
+          // [수정] totalChunks는 노드 수가 아니라 청크 수여야 함
           const restoredProgress: TranslationJobProgress = {
-            totalChunks: totalNodes,
+            totalChunks: chunks.length,
             processedChunks: successfulCount,
             successfulChunks: successfulCount,
             failedChunks: 0,
-            currentStatusMessage: `EPUB 복구 완료. ${totalNodes}개 노드, ${successfulCount}개 번역됨.`,
+            currentStatusMessage: `EPUB 복구 완료. ${chunks.length}개 청크 중 ${successfulCount}개 복원됨.`,
           };
 
           restoreSession([restoredFile], restoredResults, restoredProgress);
