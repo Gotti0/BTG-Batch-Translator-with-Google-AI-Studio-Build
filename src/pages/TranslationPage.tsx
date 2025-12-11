@@ -111,7 +111,7 @@ function FileUploadSection({ onImportSnapshot, mode, onEpubChaptersChange, onMod
       </h2>
       
       <FileUpload
-        accept={mode === 'epub' ? ['.epub'] : ['.txt', '.json']}
+        accept={mode === 'epub' ? ['.epub', '.json'] : ['.txt', '.json']}
         multiple={mode === 'text'}
         maxSize={mode === 'epub' ? 100 * 1024 * 1024 : 50 * 1024 * 1024}
         onFilesSelected={handleFilesSelected}
