@@ -920,7 +920,7 @@ export function TranslationPage() {
               <p className="text-gray-500">
                 {isRunning || isEpubTranslating ? 'EPUB 번역이 진행 중입니다... 로그 탭을 확인하세요.' : '번역을 시작하면 결과가 여기에 표시됩니다.'}
               </p>
-            )}&& !isEpubTranslating 
+            )}
           </div>
         ) : (
           /* 기존 텍스트 모드 미리보기 (ResultPreview 컴포넌트 내용) */
