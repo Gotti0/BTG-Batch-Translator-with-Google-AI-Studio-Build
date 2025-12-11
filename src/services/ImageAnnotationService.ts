@@ -162,11 +162,14 @@ export class ImageAnnotationService {
           );
 
           // 3. 주석 노드 생성
+          // 줄바꿈 문자를 <br/> 태그로 변환하여 XHTML 파싱 오류 방지
+          const formattedDescription = description.replace(/\n/g, '<br/>');
+          
           const annotationNode: EpubNode = {
             id: `${imageNode.id}_annotation`,
             type: 'text',
             tag: 'p',
-            content: `[[이미지 텍스트:\n${description}\n]]`,
+            content: `[[이미지 텍스트:<br/>${formattedDescription}<br/>]]`,
             attributes: {
               class: 'image-annotation',
               title: 'AI Annotation',

@@ -427,7 +427,13 @@ export class EpubService {
       if (node.type === 'text') {
         // 텍스트 노드: 번역된 내용으로 태그 재생성
         const attrs = node.attributes ? this.attributesToString(node.attributes) : '';
-        xhtmlContent += `  <${node.tag}${attrs}>${this.escapeHtml(node.content ?? '')}</${node.tag}>\n`;
+        // [수정] escapeHtml은 <br/> 태그까지 이스케이프해버리므로, 
+        // 먼저 이스케이프한 뒤 복원하거나, 별도 로직으로 처리해야 함.
+        // 여기서는 간단히 <br/> 태그만 예외적으로 허용하는 방식으로 처리
+        let content = this.escapeHtml(node.content ?? '');
+        content = content.replace(/&lt;br\/&gt;/g, '<br/>');
+        
+        xhtmlContent += `  <${node.tag}${attrs}>${content}</${node.tag}>\n`;
       } else {
         // image / ignored: 원본 HTML 그대로 사용
         xhtmlContent += `  ${node.html}\n`;
