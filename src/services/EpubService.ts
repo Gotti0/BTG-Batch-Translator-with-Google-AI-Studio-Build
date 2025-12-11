@@ -403,7 +403,8 @@ export class EpubService {
     const attrs: Record<string, string> = {};
 
     Array.from(el.attributes).forEach((attr) => {
-      if (['class', 'id', 'style', 'data-*'].some((a) => attr.name.includes(a))) {
+      // [수정] href 속성도 추출 대상에 포함 (<a> 태그 링크 보존)
+      if (['class', 'id', 'style', 'href', 'data-*'].some((a) => attr.name.includes(a))) {
         attrs[attr.name] = attr.value;
       }
     });
