@@ -86,8 +86,9 @@ export class EpubService {
 
         try {
           const xhtmlContent = await this.readFileFromZip(zip, xhtmlPath);
-          // [결정론적 ID 생성] 파일명(href) 전달
-          const { nodes, head } = this.parseXhtml(xhtmlContent, manifestItem.href);
+          // [결정론적 ID 생성] 파일명(href) 전달 -> [수정] 전체 경로(xhtmlPath) 전달
+          // TranslationPage에서 챕터 분배 시 fileName(xhtmlPath)과 ID 접두사를 대조하므로 일치시켜야 함
+          const { nodes, head } = this.parseXhtml(xhtmlContent, xhtmlPath);
 
           // [디버깅] 파싱된 노드 검증
           if (nodes.length === 0) {
