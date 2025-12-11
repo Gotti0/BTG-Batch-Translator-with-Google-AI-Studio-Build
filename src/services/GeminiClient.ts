@@ -274,8 +274,13 @@ export class GeminiClient {
     await this.applyRpmDelay();
 
     try {
-      // Base64 인코딩
-      const base64Image = Buffer.from(imageData).toString('base64');
+      // Base64 인코딩 (브라우저 호환)
+      let base64Image = '';
+      const len = imageData.byteLength;
+      for (let i = 0; i < len; i++) {
+        base64Image += String.fromCharCode(imageData[i]);
+      }
+      base64Image = btoa(base64Image);
 
       const response = await this.client.models.generateContent({
         model: modelName,
