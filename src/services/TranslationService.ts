@@ -961,11 +961,14 @@ export class TranslationService {
    * * 전략:
    * 1. API 요청
    * 2. JSON 파싱 시도
-   * 3. 실패 시 즉시 에러 throw -> 상위의 '분할 정복 재시도' 로직이 받아서 처리
+   * 3. [신규] 데이터 누락 감지 및 누락분에 대한 재귀 재시도
+   * 4. 실패 시 즉시 에러 throw -> 상위의 '분할 정복 재시도' 로직이 받아서 처리
+   * @param currentAttempt - 내부 재귀 호출을 위한 시도 횟수
    */
   private async translateEpubChunk(
     nodes: EpubNode[],
-    glossaryEntries?: GlossaryEntry[]
+    glossaryEntries?: GlossaryEntry[],
+    currentAttempt: number = 1
   ): Promise<EpubNode[]> {
     // 1. 텍스트 노드만 필터링
     const textNodes = nodes.filter((n) => n.type === 'text');
@@ -973,6 +976,14 @@ export class TranslationService {
     if (textNodes.length === 0) {
       return nodes; // 텍스트 노드 없음 → 원본 반환
     }
+    
+    // 재귀 탈출 조건
+    const MAX_RETRIES = this.config.maxRetryAttempts;
+    if (currentAttempt > MAX_RETRIES) {
+      this.log('error', `❌ 최대 재시도(${MAX_RETRIES}) 도달: ${textNodes.length}개 노드 번역 실패. 원문 유지.`);
+      return nodes;
+    }
+
 
     // 2. 요청 데이터 구성 (JSON 변환)
     const requestData = textNodes.map((n) => ({
@@ -1048,44 +1059,50 @@ export class TranslationService {
 
       // [변경] API 호출과 취소 요청 경합
       responseText = await Promise.race([apiPromise, cancelPromise]);
-
-      // [핵심 변경] 복잡한 복구 로직 제거!
-      // 파싱 실패 시 예외가 발생하고, 이는 자동으로 catch 블록으로 이동하여 상위로 전달됩니다.
       const translations: Array<{ id: string; translated_text: string }> = JSON.parse(responseText);
-
-      // 6. 결과 매핑
-      const translationMap = new Map(
-        translations.map((t) => [t.id, t.translated_text])
-      );
-
-      // [디버깅] 매핑 상태 확인
-      const mappedCount = nodes.filter(n => n.type === 'text' && translationMap.has(n.id)).length;
-      const totalTextNodes = nodes.filter(n => n.type === 'text').length;
+      const translationMap = new Map(translations.map((t) => [t.id, t.translated_text]));
       
-      if (mappedCount < totalTextNodes) {
-        this.log('warning', `⚠️ ID 매칭 실패 감지: 텍스트 노드 ${totalTextNodes}개 중 ${mappedCount}개만 매칭됨.`);
-        // 매칭되지 않은 첫 번째 노드 정보 출력
-        const unmapped = nodes.find(n => n.type === 'text' && !translationMap.has(n.id));
-        if (unmapped) {
-            this.log('warning', `   - 실패 예시: 원본 ID '${unmapped.id}' vs 응답 ID 샘플 '${translations[0]?.id}'`);
+      // --- START: 데이터 누락 감지 및 재귀 재시도 로직 ---
+
+      const successfullyTranslatedNodes: EpubNode[] = [];
+      const missingNodes: EpubNode[] = [];
+
+      // 요청한 텍스트 노드를 '성공'과 '누락'으로 분류
+      for (const node of textNodes) {
+        if (translationMap.has(node.id)) {
+          successfullyTranslatedNodes.push({
+            ...node,
+            content: translationMap.get(node.id)!,
+          });
+        } else {
+          missingNodes.push(node);
         }
       }
 
-      // 원본 노드에 번역 결과 병합
-      return nodes.map((node) => {
-        if (node.type === 'text') {
-            if (translationMap.has(node.id)) {
-                return {
-                    ...node,
-                    content: translationMap.get(node.id),
-                };
-            } else {
-                // 매핑 실패 시 로그 (너무 많으면 주석 처리)
-                // console.warn(`ID Mismatch: ${node.id}`);
-            }
+      let retriedNodes: EpubNode[] = [];
+      // 누락된 노드가 있으면, 누락분만 재귀적으로 재시도
+      if (missingNodes.length > 0) {
+        this.log('warning', `⚠️ 응답 누락: ${missingNodes.length}/${textNodes.length}개 노드. 재시도합니다 (시도 ${currentAttempt}).`);
+        retriedNodes = await this.translateEpubChunk(
+          missingNodes, // 누락된 노드만 재시도
+          glossaryEntries,
+          currentAttempt + 1 // 재시도 횟수 증가
+        );
+      }
+
+      // 이번 실행에서 성공한 노드와, 재귀 호출을 통해 얻은 노드를 합침
+      const combinedTranslatedNodes = [...successfullyTranslatedNodes, ...retriedNodes];
+      const finalTranslationMap = new Map(combinedTranslatedNodes.map(n => [n.id, n.content]));
+
+      // 원본 `nodes` 배열을 기준으로 최종 번역 결과를 반영하여 반환
+      return nodes.map(originalNode => {
+        if (finalTranslationMap.has(originalNode.id)) {
+          return { ...originalNode, content: finalTranslationMap.get(originalNode.id)! };
         }
-        return node;
+        // 번역 대상이 아니었거나, 모든 재시도 후에도 실패한 노드는 원문 그대로 반환
+        return originalNode;
       });
+      // --- END: 데이터 누락 감지 및 재귀 재시도 로직 ---
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1104,6 +1121,7 @@ export class TranslationService {
       }
 
       // 로그만 남기고 에러를 상위로 그대로 던짐
+      // 상위의 `retryEpubNodesWithSmallerBatches` 함수가 이 에러를 받아 분할/재시도 처리함.
       this.log('warning', `⚠️ 청크 번역/파싱 실패. 분할 재시도를 위해 에러를 상위로 전달합니다.`);
       throw error;
     } finally {
