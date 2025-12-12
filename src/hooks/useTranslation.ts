@@ -11,6 +11,7 @@ import { ChunkService } from '../services/ChunkService';
 import { EpubService } from '../services/EpubService';
 import { EpubChunkService } from '../services/EpubChunkService';
 import type { TranslationJobProgress, TranslationResult, TranslationSnapshot, FileContent } from '../types/dtos';
+import type { AppConfig } from '../types/config';
 
 /**
  * 번역 기능을 제공하는 커스텀 훅
@@ -435,8 +436,35 @@ export function useTranslation() {
       return;
     }
 
-    // 2. 설정 복구 (스냅샷의 설정을 우선)
-    const restoredConfig = { ...config, ...snapshot.config };
+    // 2. 설정 복구 (스네이크 케이스 -> 카멜 케이스 변환 매핑)
+    // snapshot.config(저장된 값)을 AppConfig(앱 설정) 키에 맞게 매핑합니다.
+    const restoredConfig: Partial<AppConfig> = {
+      ...config, // 기존 설정을 베이스로 함 (누락된 필드 방지)
+      
+      // [기본 설정 복구]
+      chunkSize: snapshot.config.chunk_size,
+      modelName: snapshot.config.model_name,
+      prompts: snapshot.config.prompt_template || config.prompts, // 키 이름 변경 주의 (prompts <-> prompt_template)
+      
+      temperature: snapshot.config.temperature ?? config.temperature,
+      requestsPerMinute: snapshot.config.requests_per_minute ?? config.requestsPerMinute,
+      maxWorkers: snapshot.config.max_workers ?? config.maxWorkers,
+      
+      // [프리필 설정 복구]
+      enablePrefillTranslation: snapshot.config.enable_prefill_translation ?? config.enablePrefillTranslation,
+      prefillSystemInstruction: snapshot.config.prefill_system_instruction ?? config.prefillSystemInstruction,
+      prefillCachedHistory: snapshot.config.prefill_cached_history ?? config.prefillCachedHistory,
+      
+      // [용어집 설정 복구]
+      enableDynamicGlossaryInjection: snapshot.config.enable_dynamic_glossary_injection ?? config.enableDynamicGlossaryInjection,
+      maxGlossaryEntriesPerChunkInjection: snapshot.config.max_glossary_entries_per_chunk_injection ?? config.maxGlossaryEntriesPerChunkInjection,
+      maxGlossaryCharsPerChunkInjection: snapshot.config.max_glossary_chars_per_chunk_injection ?? config.maxGlossaryCharsPerChunkInjection,
+      glossaryExtractionPrompt: snapshot.config.glossary_extraction_prompt ?? config.glossaryExtractionPrompt,
+      
+      // [EPUB 설정 복구]
+      enableImageAnnotation: snapshot.config.enable_image_annotation ?? config.enableImageAnnotation,
+    };
+
     updateConfig(restoredConfig);
     addLog('info', `설정이 복구되었습니다. (청크 크기: ${restoredConfig.chunkSize})`);
 
