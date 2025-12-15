@@ -151,12 +151,31 @@ export class ChunkService {
    * @returns 분할된 청크 배열
    */
   splitChunkBySentences(chunkText: string, maxSentencesPerChunk: number = 2): string[] {
-    // 문장 분할 (한국어/영어/중국어 문장 부호 기준)
-    const sentencePattern = /[.!?]+\s+|[。！？]+\s*|[\n\r]+/;
-    const sentences = chunkText
-      .split(sentencePattern)
-      .map(s => s.trim())
-      .filter(s => s.length > 0);
+    // 문장 분할 정규식 개선
+    // 1. 문장부호(.!?) 뒤에 닫는 괄호/따옴표가 올 수 있음을 고려
+    // 2. 문장부호 자체를 캡처 그룹으로 포함하여 소실 방지
+    // 3. CJK 문장부호(。！？)는 공백이 없어도 분할, 영문(.!?)은 공백이 있어야 분할(약어 방지)
+    
+    // 패턴 설명:
+    // 1. ([.!?]+['"”」\)]*(?:\s+|[\r\n]+|$)) -> 영문: 문장부호 + (선택)닫는괄호/따옴표 + 공백/줄바꿈/끝
+    // 2. ([。！？]+['"”」\)]*(?:\s*|[\r\n]+|$)) -> CJK: 문장부호 + (선택)닫는괄호/따옴표 + (선택)공백/줄바꿈/끝
+    // 3. ([\r\n]+) -> 줄바꿈만 있는 경우
+    const sentencePattern = /([.!?]+['"”」\)]*(?:\s+|[\r\n]+|$)|[。！？]+['"”」\)]*(?:\s*|[\r\n]+|$)|[\r\n]+)/;
+
+    const parts = chunkText.split(sentencePattern);
+    const sentences: string[] = [];
+
+    // split 결과는 [텍스트, 구분자, 텍스트, 구분자...] 형식이 됨
+    for (let i = 0; i < parts.length; i += 2) {
+      const content = parts[i];
+      const separator = parts[i + 1] || '';
+      
+      const fullSentence = (content + separator).trim();
+      
+      if (fullSentence.length > 0) {
+        sentences.push(fullSentence);
+      }
+    }
 
     if (sentences.length <= 1) {
       return [chunkText];
@@ -166,7 +185,7 @@ export class ChunkService {
     const chunks: string[] = [];
     for (let i = 0; i < sentences.length; i += maxSentencesPerChunk) {
       const chunkSentences = sentences.slice(i, i + maxSentencesPerChunk);
-      chunks.push(chunkSentences.join(' '));
+      chunks.push(chunkSentences.join(' ')); // 문장 간 공백으로 연결
     }
 
     return chunks;

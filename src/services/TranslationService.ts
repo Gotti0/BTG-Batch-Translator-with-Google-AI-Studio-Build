@@ -1,4 +1,3 @@
-
 // services/TranslationService.ts
 // Python domain/translation_service.py 의 TypeScript 변환
 
@@ -185,6 +184,23 @@ export class TranslationService {
   }
 
   /**
+   * 번역 결과 후처리 메서드 (Smart Filter Version)
+   * HTML 태그로 추정되는 패턴만 삭제하고, <상태창> 같은 한글 브라켓은 유지합니다.
+   */
+  private postProcess(text: string): string {
+    if (!text) return text;
+    
+    if (this.config.enablePostProcessing) {
+      // [수정] 사용자 아이디어 적용: 
+      // <> 안에 영어, 숫자, 공백, 특수문자(/ " = ' -)만 있는 경우를 HTML 태그로 간주하여 삭제합니다.
+      // 한글이 단 한 글자라도 포함되면(<상태창>, <아이템>) 삭제되지 않습니다.
+      return text.replace(/<[a-zA-Z0-9\/\s"='-]+>/g, '').trim();
+    }
+
+    return text;
+  }
+
+  /**
    * 단일 청크 번역
    * @param enableSafetyRetry - 실패 시 콘텐츠 안전 분할 재시도를 수행할지 여부 (재귀 호출 시 false로 설정)
    */
@@ -254,7 +270,10 @@ export class TranslationService {
       }
 
       // API 호출과 취소 요청 경합
-      const translatedText = await Promise.race([apiPromise, cancelPromise]);
+      const rawTranslatedText = await Promise.race([apiPromise, cancelPromise]);
+      
+      // [추가] 후처리 적용 (HTML 태그 제거 등)
+      const translatedText = this.postProcess(rawTranslatedText);
       
       this.log('info', `청크 ${chunkIndex + 1} 번역 완료 (${translatedText.length}자)`);
 
@@ -388,7 +407,7 @@ export class TranslationService {
         return {
             chunkIndex: originalIndex,
             originalText: chunkText,
-            translatedText: `[분할 불가능한 오류 발생 콘텐츠: ${chunkText.slice(0, 30)}...]`,
+            translatedText: `[분할 불가능한 오류 발생 콘텐츠: ${chunkText}...]`,
             success: false,
             error: '분할 불가능',
         };

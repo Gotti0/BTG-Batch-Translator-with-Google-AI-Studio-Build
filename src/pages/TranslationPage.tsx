@@ -644,7 +644,7 @@ function ResultPreview({ mode }: { mode: 'text' | 'epub' }) {
   }, [translatedText]);
 
   if (!translatedText && results.length === 0) return null;
-  if (mode === 'epub') return null;
+  if (mode === 'epub' return null;
 
   const successCount = results.filter((r: { success: boolean }) => r.success).length;
   const failCount = results.filter((r: { success: boolean }) => !r.success).length;
@@ -934,7 +934,7 @@ export function TranslationPage() {
                 variant="outline"
                 size="sm"
                 leftIcon={<FileJson className="w-4 h-4" />}
-                onClick={() => exportSnapshot(mode, undefined)}
+                onClick={() => exportSnapshot()}
                 title="현재 진행 상황을 파일로 저장하여 나중에 이어할 수 있습니다."
               >
                 작업 저장
@@ -945,7 +945,7 @@ export function TranslationPage() {
                 variant="outline"
                 size="sm"
                 leftIcon={<FileJson className="w-4 h-4" />}
-                onClick={() => exportSnapshot(mode, epubChapters)}
+                onClick={() => exportSnapshot()}
                 title="EPUB 번역 진행 상황을 파일로 저장하여 나중에 이어할 수 있습니다."
               >
                 작업 저장
