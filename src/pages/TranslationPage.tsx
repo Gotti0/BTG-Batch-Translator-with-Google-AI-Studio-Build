@@ -644,7 +644,7 @@ function ResultPreview({ mode }: { mode: 'text' | 'epub' }) {
   }, [translatedText]);
 
   if (!translatedText && results.length === 0) return null;
-  if (mode === 'epub' return null;
+  if (mode === 'epub') return null;
 
   const successCount = results.filter((r: { success: boolean }) => r.success).length;
   const failCount = results.filter((r: { success: boolean }) => !r.success).length;
