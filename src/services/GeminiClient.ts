@@ -230,7 +230,7 @@ export class GeminiClient {
           temperature: config?.temperature ?? 0.7,
           topP: config?.topP ?? 0.9,
           topK: config?.topK ?? 40,
-          maxOutputTokens: config?.maxOutputTokens ?? 8192,
+          maxOutputTokens: config?.maxOutputTokens ?? 65536,
           ...(config?.stopSequences && { stopSequences: config.stopSequences }),
           // [추가] 구조화된 출력 설정 매핑
           responseMimeType: config?.responseMimeType,
@@ -345,7 +345,7 @@ export class GeminiClient {
           temperature: config?.temperature ?? 0.7,
           topP: config?.topP ?? 0.9,
           topK: config?.topK ?? 40,
-          maxOutputTokens: config?.maxOutputTokens ?? 8192,
+          maxOutputTokens: config?.maxOutputTokens ?? 65536,
           // 시스템 지침을 config에 포함
           ...(systemInstruction && { systemInstruction }),
           // 구조화된 출력 설정 매핑
@@ -402,7 +402,7 @@ export class GeminiClient {
           temperature: config?.temperature ?? 0.7,
           topP: config?.topP ?? 0.9,
           topK: config?.topK ?? 40,
-          maxOutputTokens: config?.maxOutputTokens ?? 8192,
+          maxOutputTokens: config?.maxOutputTokens ?? 65536,
           // 시스템 지침을 config에 포함
           ...(systemInstruction && { systemInstruction }),
         },
