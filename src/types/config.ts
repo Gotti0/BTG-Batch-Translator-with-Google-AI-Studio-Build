@@ -161,7 +161,7 @@ Ensure your response is a list of objects, where each object has 'keyword', 'tra
  */
 export const defaultConfig: AppConfig = {
   // API 설정
-  modelName: 'gemini-2.5-flash',
+  modelName: 'gemini-3-flash-preview',
   temperature: 0.7,
   topP: 0.9,
   thinkingBudget: undefined,
