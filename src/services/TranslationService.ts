@@ -201,6 +201,33 @@ export class TranslationService {
   }
 
   /**
+   * [NEW] Gemini API의 '교대 역할(Alternating Roles)' 제약을 준수하기 위해
+   * 연속된 동일 역할의 히스토리를 하나로 병합합니다.
+   */
+  private mergeConsecutiveRoles(history: { role: 'user' | 'model'; content: string }[]) {
+    if (history.length === 0) return [];
+
+    const merged: { role: 'user' | 'model'; content: string }[] = [];
+    let current = { ...history[0] };
+
+    for (let i = 1; i < history.length; i++) {
+      const next = history[i];
+      if (current.role === next.role) {
+        // 동일 역할인 경우 내용을 줄바꿈으로 병합
+        current.content += `\n\n${next.content}`;
+      } else {
+        // 역할이 바뀌면 지금까지의 결과 저장 후 교체
+        merged.push(current);
+        current = { ...next };
+      }
+    }
+    // 마지막 항목 저장
+    merged.push(current);
+    
+    return merged;
+  }
+
+  /**
    * 단일 청크 번역
    * @param enableSafetyRetry - 실패 시 콘텐츠 안전 분할 재시도를 수행할지 여부 (재귀 호출 시 false로 설정)
    */
@@ -247,11 +274,14 @@ export class TranslationService {
 
       if (this.config.enablePrefillTranslation) {
         // 채팅 모드 (프리필 대체)
-        const chatHistory = this.config.prefillCachedHistory.map(item => ({
+        const rawHistory = this.config.prefillCachedHistory.map(item => ({
           role: item.role,
           content: item.parts.join('\n'),
         }));
         
+        // [수정] API 제약 준수를 위한 교대 역할 병합 실행
+        const chatHistory = this.mergeConsecutiveRoles(rawHistory);
+
         apiPromise = this.geminiClient.generateWithChat(
           prompt,
           this.config.prefillSystemInstruction,
@@ -1054,11 +1084,14 @@ export class TranslationService {
       // 5. API 호출 (Prefill 설정 적용)
       if (this.config.enablePrefillTranslation) {
         // 채팅 모드 (프리필 히스토리 주입)
-        const chatHistory = this.config.prefillCachedHistory.map(item => ({
+        const rawHistory = this.config.prefillCachedHistory.map(item => ({
           role: item.role,
           content: item.parts.join('\n'),
         }));
         
+        // [수정] API 제약 준수를 위한 교대 역할 병합 실행
+        const chatHistory = this.mergeConsecutiveRoles(rawHistory);
+
         apiPromise = this.geminiClient.generateWithChat(
           prompt,
           this.config.prefillSystemInstruction,
