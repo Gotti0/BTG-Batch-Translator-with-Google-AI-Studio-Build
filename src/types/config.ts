@@ -190,9 +190,9 @@ export const defaultConfig: AppConfig = {
   prefillCachedHistory: DEFAULT_PREFILL_CACHED_HISTORY,
   
   // 재시도 및 콘텐츠 안전 설정
-  maxRetryAttempts: 5,  // 분할/재귀 재시도 최대 횟수
+  maxRetryAttempts: 10,  // 분할/재귀 재시도 최대 횟수
   useContentSafetyRetry: true,
-  minContentSafetyChunkSize: 100,
+  minContentSafetyChunkSize: 5,
   contentSafetySplitBySentences: true,
   
   // 용어집 설정
