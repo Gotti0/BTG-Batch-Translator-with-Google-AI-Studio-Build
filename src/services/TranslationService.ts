@@ -393,7 +393,7 @@ export class TranslationService {
       return {
         chunkIndex: originalIndex,
         originalText: chunkText,
-        translatedText: `[번역 오류로 인한 실패: ${chunkText.slice(0, 30)}...]`,
+        translatedText: `[번역 오류로 인한 실패: ${chunkText}...]`,
         success: false,
         error: '최소 청크 크기에서도 번역 실패',
       };
