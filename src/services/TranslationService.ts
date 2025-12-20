@@ -319,6 +319,11 @@ export class TranslationService {
       
       // [추가] 후처리 적용 (HTML 태그 제거 등)
       const translatedText = this.postProcess(rawTranslatedText);
+
+      // [핵심 변경] 후처리 후 텍스트가 비어있다면(공백 등) 예외를 발생시켜 재시도 로직 유도
+      if (!translatedText && chunkText.trim()) {
+        throw new Error('API 응답이 비어있습니다 (후처리 후 0자).');
+      }
       
       this.log('info', `청크 ${chunkIndex + 1} 번역 완료 (${translatedText.length}자)`);
 
@@ -359,10 +364,14 @@ export class TranslationService {
 
       this.log('error', `청크 ${chunkIndex + 1} 번역 실패: ${errorMessage}`);
 
-      // 콘텐츠 안전 재시도
+      // 콘텐츠 안전 재시도 또는 빈 응답 오류 시 재시도
       // enableSafetyRetry가 true일 때만 자체 재시도 로직 수행
-      if (enableSafetyRetry && this.config.useContentSafetyRetry && GeminiClient.isContentSafetyError(error as Error)) {
-        this.log('warning', `콘텐츠 안전 오류 감지. 분할 재시도 시작...`);
+      // isContentSafetyError 체크 외에도, 빈 응답 오류인 경우에도 재시도를 시도하도록 조건 확장 가능
+      const isContentSafety = GeminiClient.isContentSafetyError(error as Error);
+      const isEmptyResponse = errorMessage.includes('API 응답이 비어있습니다');
+
+      if (enableSafetyRetry && this.config.useContentSafetyRetry && (isContentSafety || isEmptyResponse)) {
+        this.log('warning', isContentSafety ? `콘텐츠 안전 오류 감지. 분할 재시도 시작...` : `빈 응답 오류 감지. 분할 재시도 시작...`);
         return this.retryWithSmallerChunks(chunkText, chunkIndex);
       }
 
