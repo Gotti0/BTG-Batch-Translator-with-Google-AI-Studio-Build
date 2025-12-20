@@ -5,6 +5,19 @@
 import { GoogleGenAI } from '@google/genai';
 
 /**
+ * 기본 안전 설정 (모두 허용)
+ * 소설 번역 등 창작물 작업 시 문맥상 필요한 표현이 차단되는 것을 방지합니다.
+ * @note SDK의 SafetySetting 타입과 호환되도록 any로 캐스팅합니다.
+ */
+const DEFAULT_SAFETY_SETTINGS: any = [
+  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
+];
+
+/**
  * 생성 설정 인터페이스
  */
 export interface GenerationConfig {
@@ -237,6 +250,8 @@ export class GeminiClient {
           responseSchema: config?.responseJsonSchema,
           // 시스템 지침을 config에 포함
           ...(systemInstruction && { systemInstruction }),
+          // [중요] 안전 설정: BLOCK_NONE 적용
+          safetySettings: DEFAULT_SAFETY_SETTINGS,
         },
       });
 
@@ -300,6 +315,8 @@ export class GeminiClient {
         ],
         config: {
           temperature: 0.4, // 설명은 사실적이어야 하므로 낮게 설정
+          // [중요] 안전 설정: BLOCK_NONE 적용
+          safetySettings: DEFAULT_SAFETY_SETTINGS,
         },
       });
 
@@ -351,6 +368,8 @@ export class GeminiClient {
           // 구조화된 출력 설정 매핑
           responseMimeType: config?.responseMimeType,
           responseSchema: config?.responseJsonSchema,
+          // [중요] 안전 설정: BLOCK_NONE 적용
+          safetySettings: DEFAULT_SAFETY_SETTINGS,
         },
         history: history.map(msg => ({
           role: msg.role,
@@ -405,6 +424,8 @@ export class GeminiClient {
           maxOutputTokens: config?.maxOutputTokens ?? 65536,
           // 시스템 지침을 config에 포함
           ...(systemInstruction && { systemInstruction }),
+          // [중요] 안전 설정: BLOCK_NONE 적용
+          safetySettings: DEFAULT_SAFETY_SETTINGS,
         },
       });
 
