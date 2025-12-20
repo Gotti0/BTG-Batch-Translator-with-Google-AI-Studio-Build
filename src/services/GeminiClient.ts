@@ -30,6 +30,8 @@ export interface GenerationConfig {
   // [추가] 구조화된 출력을 위한 설정
   responseMimeType?: string;
   responseJsonSchema?: object; 
+  // [추가] 템플릿 치환을 위한 데이터 맵 (예: { '{{slot}}': '원문', '{{glossary_context}}': '용어...' })
+  substitutionData?: Record<string, string>;
 }
 
 /**
@@ -336,7 +338,11 @@ export class GeminiClient {
   }
 
   /**
-   * 채팅 세션을 사용한 텍스트 생성
+   * 채팅 세션을 사용한 텍스트 생성 (다중 치환 지원)
+   * * [변경 사항]
+   * 1. config.substitutionData가 있으면 히스토리 내의 해당 키들을 값으로 모두 치환합니다.
+   * 2. 기본적으로 prompt 인자는 '{{slot}}'의 값으로 사용됩니다 (substitutionData에 명시되지 않은 경우).
+   * 3. 히스토리의 마지막 User 메시지를 트리거로 사용합니다.
    * 
    * @param prompt - 현재 프롬프트
    * @param systemInstruction - 시스템 지침
@@ -355,7 +361,60 @@ export class GeminiClient {
     await this.applyRpmDelay();
 
     try {
-      // 새로운 SDK: client.chats.create() 사용
+      // 1. 히스토리 깊은 복사 (원본 오염 방지)
+      const chatHistory = history.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
+
+      // 2. 치환 데이터 준비
+      // config.substitutionData가 없으면 빈 객체 생성
+      const replacements = { ...(config?.substitutionData || {}) };
+
+      // '{{slot}}'이 명시적으로 제공되지 않았다면, prompt 인자를 값으로 사용 (하위 호환성)
+      if (!replacements['{{slot}}']) {
+        replacements['{{slot}}'] = prompt;
+      }
+
+      // 3. 히스토리 내 치환 수행 ({{slot}}, {{glossary_context}} 등 모두 처리)
+      let replacementOccurred = false;
+
+      chatHistory.forEach(msg => {
+        for (const [key, value] of Object.entries(replacements)) {
+          if (msg.content.includes(key)) {
+            // 모든 등장 패턴을 치환 (split-join 방식 사용)
+            msg.content = msg.content.split(key).join(value);
+            replacementOccurred = true;
+          }
+        }
+      });
+
+      if (replacementOccurred) {
+         console.log(`[GeminiClient] 히스토리 내 템플릿 치환 완료 (${Object.keys(replacements).join(', ')})`);
+      }
+
+      // 4. 실제 전송할 메시지 결정 (Trigger Message)
+      let messageToSend = " "; // 기본 트리거 (비어있지 않은 공백)
+
+      // 치환이 발생했다면, 마지막 메시지를 확인하여 트리거 로직 수행
+      if (replacementOccurred) {
+        const lastIndex = chatHistory.length - 1;
+        
+        if (lastIndex >= 0) {
+            const lastMessage = chatHistory[lastIndex];
+            if (lastMessage.role === 'user') {
+                // 마지막이 User라면 그 내용을 트리거로 사용하고 히스토리에서 제거
+                messageToSend = lastMessage.content;
+                chatHistory.pop(); 
+            } 
+            // 마지막이 Model(프리필)이라면 모델이 이어받도록 공백 메시지 전송 (위에서 " "로 초기화됨)
+        }
+      } else {
+        // 치환이 발생하지 않았다면 (일반 채팅 모드), prompt를 그대로 전송
+        messageToSend = prompt;
+      }
+
+      // 5. 채팅 세션 생성
       const chat = this.client.chats.create({
         model: modelName,
         config: {
@@ -371,16 +430,16 @@ export class GeminiClient {
           // [중요] 안전 설정: BLOCK_NONE 적용
           safetySettings: DEFAULT_SAFETY_SETTINGS,
         },
-        history: history.map(msg => ({
+        history: chatHistory.map(msg => ({
           role: msg.role,
           parts: [{ text: msg.content }],
         })),
       });
 
-      const response = await chat.sendMessage({ message: prompt });
+      const response = await chat.sendMessage({ message: messageToSend });
       const text = response.text;
       
-      if (!text && prompt.trim()) {
+      if (!text && messageToSend.trim()) {
         throw new GeminiContentSafetyException('API가 빈 응답을 반환했습니다.');
       }
 

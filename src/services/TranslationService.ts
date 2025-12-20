@@ -140,30 +140,34 @@ export class TranslationService {
   }
 
   /**
-   * 프롬프트 구성
+   * 프롬프트 및 컨텍스트 데이터 준비 (리팩토링됨)
+   * 
+   * @param chunkText 번역할 텍스트 청크
+   * @param chunkIndex 청크 인덱스 (로깅용)
+   * @returns { prompt: string, glossaryContext: string } 구성된 프롬프트와 용어집 컨텍스트
    */
-  private constructPrompt(chunkText: string, chunkIndex: number): string {
+  private preparePromptAndContext(chunkText: string, chunkIndex: number): { prompt: string, glossaryContext: string } {
     let prompt = this.config.prompts;
+    let glossaryContext = '용어집 컨텍스트 없음';
 
-    // 용어집 컨텍스트 주입
-    if (this.config.enableDynamicGlossaryInjection && prompt.includes('{{glossary_context}}')) {
-      const glossaryContext = formatGlossaryForPrompt(
+    // 용어집 컨텍스트 생성
+    if (this.config.enableDynamicGlossaryInjection) {
+      glossaryContext = formatGlossaryForPrompt(
         this.glossaryEntries,
         chunkText,
         this.config.maxGlossaryEntriesPerChunkInjection,
         this.config.maxGlossaryCharsPerChunkInjection
       );
 
-      // 용어집 주입 로깅
+      // 용어집 로깅 (컨텍스트가 생성된 경우)
       if (glossaryContext !== '용어집 컨텍스트 없음') {
         const entries = glossaryContext.split('\n');
         const entryCount = entries.length;
-        this.log('info', `청크 ${chunkIndex + 1}: 동적 용어집 ${entryCount}개 항목이 주입되었습니다.`);
+        this.log('info', `청크 ${chunkIndex + 1}: 동적 용어집 ${entryCount}개 항목이 준비되었습니다.`);
         
-        // 상위 3개 항목 로깅 (추가된 기능)
+        // 상위 3개 항목 로깅
         const topItems = entries.slice(0, 3);
         topItems.forEach((item) => {
-          // "- " 제거하여 깔끔하게 출력
           this.log('info', `   └ ${item.replace(/^- /, '')}`);
         });
 
@@ -171,16 +175,16 @@ export class TranslationService {
           this.log('info', `   └ ... 외 ${entryCount - 3}개`);
         }
       }
-
-      prompt = prompt.replace('{{glossary_context}}', glossaryContext);
-    } else if (prompt.includes('{{glossary_context}}')) {
-      prompt = prompt.replace('{{glossary_context}}', '용어집 컨텍스트 없음');
     }
 
-    // 본문 삽입
+    // 프롬프트 내 치환 (기본 템플릿 처리)
+    if (prompt.includes('{{glossary_context}}')) {
+      prompt = prompt.replace('{{glossary_context}}', glossaryContext);
+    }
+    
     prompt = prompt.replace('{{slot}}', chunkText);
 
-    return prompt;
+    return { prompt, glossaryContext };
   }
 
   /**
@@ -245,7 +249,9 @@ export class TranslationService {
       };
     }
 
-    const prompt = this.constructPrompt(chunkText, chunkIndex);
+    // [수정] 프롬프트 및 컨텍스트 준비 (분리된 로직 사용)
+    const { prompt, glossaryContext } = this.preparePromptAndContext(chunkText, chunkIndex);
+    
     const textPreview = chunkText.slice(0, 100).replace(/\n/g, ' ');
     this.log('info', `청크 ${chunkIndex + 1} 번역 시작 (모델: ${this.config.modelName}): "${textPreview}..."`);
 
@@ -282,15 +288,24 @@ export class TranslationService {
         // [수정] API 제약 준수를 위한 교대 역할 병합 실행
         const chatHistory = this.mergeConsecutiveRoles(rawHistory);
 
+        // [추가] 치환 데이터 구성 (히스토리 내 템플릿 치환용)
+        const substitutionData = {
+          '{{slot}}': chunkText,
+          '{{glossary_context}}': glossaryContext
+        };
+
         apiPromise = this.geminiClient.generateWithChat(
           prompt,
           this.config.prefillSystemInstruction,
           chatHistory,
           this.config.modelName,
-          generationConfig
+          {
+            ...generationConfig,
+            substitutionData // [추가] 치환 데이터 전달
+          }
         );
       } else {
-        // 일반 모드
+        // 일반 모드 (prompt는 이미 preparePromptAndContext에서 치환됨)
         apiPromise = this.geminiClient.generateText(
           prompt,
           this.config.modelName,
@@ -393,7 +408,7 @@ export class TranslationService {
       return {
         chunkIndex: originalIndex,
         originalText: chunkText,
-        translatedText: `[번역 오류로 인한 실패: ${chunkText}...]`,
+        translatedText: `[번역 오류로 인한 실패: ${chunkText.slice(0, 30)}...]`,
         success: false,
         error: '최소 청크 크기에서도 번역 실패',
       };
@@ -1043,9 +1058,8 @@ export class TranslationService {
     // 텍스트 노드들을 JSON 문자열로 직렬화 (이것이 {{slot}}에 들어감)
     const jsonString = JSON.stringify(requestData, null, 2);
 
-    // 3. 프롬프트 구성
-    // 사용자 설정 프롬프트 템플릿 사용 (용어집 자동 주입 포함)
-    const prompt = this.constructPrompt(jsonString, 0);
+    // 3. 프롬프트 및 컨텍스트 준비
+    const { prompt, glossaryContext } = this.preparePromptAndContext(jsonString, 0);
 
     // 4. JSON Schema 설정 (구조화된 출력 강제)
     const config: GenerationConfig = {
@@ -1092,12 +1106,21 @@ export class TranslationService {
         // [수정] API 제약 준수를 위한 교대 역할 병합 실행
         const chatHistory = this.mergeConsecutiveRoles(rawHistory);
 
+        // [추가] 치환 데이터 구성
+        const substitutionData = {
+          '{{slot}}': jsonString,
+          '{{glossary_context}}': glossaryContext
+        };
+
         apiPromise = this.geminiClient.generateWithChat(
           prompt,
           this.config.prefillSystemInstruction,
           chatHistory,
           this.config.modelName,
-          config
+          {
+            ...config,
+            substitutionData // [추가]
+          }
         );
       } else {
         // 일반 모드
