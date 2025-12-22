@@ -193,15 +193,19 @@ export class TranslationService {
    */
   private postProcess(text: string): string {
     if (!text) return text;
-    
+
     if (this.config.enablePostProcessing) {
-      // [수정] 사용자 아이디어 적용: 
-      // <> 안에 영어, 숫자, 공백, 특수문자(/ " = ' -)만 있는 경우를 HTML 태그로 간주하여 삭제합니다.
-      // 한글이 단 한 글자라도 포함되면(<상태창>, <아이템>) 삭제되지 않습니다.
-      return text.replace(/<[a-zA-Z0-9\/\s"='-]+>/g, '').trim();
+      // [1단계] Thinking Process 블록(태그 + 내부 콘텐츠) 완전 제거
+      // <thinking>으로 시작하고 </thinking>으로 끝나는 모든 구간(줄바꿈 포함)을 삭제합니다.
+      // [\s\S]*? : 줄바꿈을 포함한 모든 문자를 최단 일치(Non-greedy)로 매칭
+      text = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
+
+      // [2단계] 기존 로직: 잔여 HTML 태그 제거 (한글 태그 <상태창> 등은 보존)
+      // <> 안에 영어, 숫자, 공백, 특수문자(/ " = ' -)만 있는 경우를 태그로 간주하여 삭제
+      text = text.replace(/<[a-zA-Z0-9\/\s"='-]+>/g, '');
     }
 
-    return text;
+    return text.trim();
   }
 
   /**
