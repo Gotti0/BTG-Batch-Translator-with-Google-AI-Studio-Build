@@ -17,7 +17,11 @@ export interface AppConfig {
   modelName: string;
   temperature: number;
   topP: number;
-  thinkingBudget?: number;
+  
+  // Thinking 모델 설정
+  enableThinking: boolean;
+  thinkingBudget: number;
+  thinkingLevel: 'minimal' | 'low' | 'medium' | 'high';
   
   // 처리 설정
   chunkSize: number;
@@ -164,8 +168,12 @@ export const defaultConfig: AppConfig = {
   modelName: 'gemini-3-flash-preview',
   temperature: 0.7,
   topP: 0.9,
-  thinkingBudget: undefined,
   
+  // Thinking 모델 설정
+  enableThinking: true,
+  thinkingBudget: -1, // -1 for 'auto'
+  thinkingLevel: 'high',
+
   // 처리 설정
   chunkSize: 10000,
   requestsPerMinute: 10,

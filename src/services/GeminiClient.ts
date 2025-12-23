@@ -32,6 +32,10 @@ export interface GenerationConfig {
   responseJsonSchema?: object; 
   // [추가] 템플릿 치환을 위한 데이터 맵 (예: { '{{slot}}': '원문', '{{glossary_context}}': '용어...' })
   substitutionData?: Record<string, string>;
+  // [추가] Thinking 모델 파라미터
+  enableThinking?: boolean;
+  thinkingBudget?: number;
+  thinkingLevel?: 'low' | 'high';
 }
 
 /**
@@ -210,6 +214,24 @@ export class GeminiClient {
       await this.sleep(sleepTime);
     }
   }
+  
+  /**
+   * 모델 이름에 따라 적절한 Thinking Config를 반환하는 헬퍼 메서드
+   */
+  private getThinkingConfig(modelName: string, config?: GenerationConfig): any {
+    // UI에서 명시적으로 비활성화한 경우
+    if (config?.enableThinking === false) return undefined;
+    
+    if (modelName.includes("gemini-3")) {
+      return { thinkingLevel: config?.thinkingLevel || "high" };
+    } else if (modelName.includes("gemini-2.5")) {
+      // thinkingBudget이 0 또는 양수일 경우 해당 값 사용, 그렇지 않으면 -1 (Dynamic) 사용
+      const budget = (config?.thinkingBudget !== undefined && config.thinkingBudget >= 0) ? config.thinkingBudget : -1;
+      return { thinkingBudget: budget };
+    }
+    return undefined;
+  }
+
 
   /**
    * 대기 유틸리티
@@ -235,6 +257,8 @@ export class GeminiClient {
   ): Promise<string> {
     await this.applyRpmDelay();
 
+    const thinkingConfig = this.getThinkingConfig(modelName, config);
+
     try {
       // 새로운 SDK: client.models.generateContent() 사용
       // 모델명은 요청 시점에 전달
@@ -247,13 +271,11 @@ export class GeminiClient {
           topK: config?.topK ?? 40,
           maxOutputTokens: config?.maxOutputTokens ?? 65536,
           ...(config?.stopSequences && { stopSequences: config.stopSequences }),
-          // [추가] 구조화된 출력 설정 매핑
           responseMimeType: config?.responseMimeType,
           responseSchema: config?.responseJsonSchema,
-          // 시스템 지침을 config에 포함
           ...(systemInstruction && { systemInstruction }),
-          // [중요] 안전 설정: BLOCK_NONE 적용
           safetySettings: DEFAULT_SAFETY_SETTINGS,
+          ...(thinkingConfig && { thinkingConfig }), 
         },
       });
 
@@ -359,6 +381,8 @@ export class GeminiClient {
     config?: GenerationConfig
   ): Promise<string> {
     await this.applyRpmDelay();
+    
+    const thinkingConfig = this.getThinkingConfig(modelName, config);
 
     try {
       // 1. 히스토리 깊은 복사 (원본 오염 방지)
@@ -368,49 +392,37 @@ export class GeminiClient {
       }));
 
       // 2. 치환 데이터 준비
-      // config.substitutionData가 없으면 빈 객체 생성
       const replacements = { ...(config?.substitutionData || {}) };
-
-      // '{{slot}}'이 명시적으로 제공되지 않았다면, prompt 인자를 값으로 사용 (하위 호환성)
       if (!replacements['{{slot}}']) {
         replacements['{{slot}}'] = prompt;
       }
 
-      // 3. 히스토리 내 치환 수행 ({{slot}}, {{glossary_context}} 등 모두 처리)
+      // 3. 히스토리 내 치환 수행
       let replacementOccurred = false;
-
       chatHistory.forEach(msg => {
         for (const [key, value] of Object.entries(replacements)) {
           if (msg.content.includes(key)) {
-            // 모든 등장 패턴을 치환 (split-join 방식 사용)
             msg.content = msg.content.split(key).join(value);
             replacementOccurred = true;
           }
         }
       });
-
       if (replacementOccurred) {
          console.log(`[GeminiClient] 히스토리 내 템플릿 치환 완료 (${Object.keys(replacements).join(', ')})`);
       }
 
-      // 4. 실제 전송할 메시지 결정 (Trigger Message)
-      let messageToSend = " "; // 기본 트리거 (비어있지 않은 공백)
-
-      // 치환이 발생했다면, 마지막 메시지를 확인하여 트리거 로직 수행
+      // 4. 실제 전송할 메시지 결정
+      let messageToSend = " "; 
       if (replacementOccurred) {
         const lastIndex = chatHistory.length - 1;
-        
         if (lastIndex >= 0) {
             const lastMessage = chatHistory[lastIndex];
             if (lastMessage.role === 'user') {
-                // 마지막이 User라면 그 내용을 트리거로 사용하고 히스토리에서 제거
                 messageToSend = lastMessage.content;
                 chatHistory.pop(); 
             } 
-            // 마지막이 Model(프리필)이라면 모델이 이어받도록 공백 메시지 전송 (위에서 " "로 초기화됨)
         }
       } else {
-        // 치환이 발생하지 않았다면 (일반 채팅 모드), prompt를 그대로 전송
         messageToSend = prompt;
       }
 
@@ -422,13 +434,11 @@ export class GeminiClient {
           topP: config?.topP ?? 0.9,
           topK: config?.topK ?? 40,
           maxOutputTokens: config?.maxOutputTokens ?? 65536,
-          // 시스템 지침을 config에 포함
           ...(systemInstruction && { systemInstruction }),
-          // 구조화된 출력 설정 매핑
           responseMimeType: config?.responseMimeType,
           responseSchema: config?.responseJsonSchema,
-          // [중요] 안전 설정: BLOCK_NONE 적용
           safetySettings: DEFAULT_SAFETY_SETTINGS,
+          ...(thinkingConfig && { thinkingConfig }), 
         },
         history: chatHistory.map(msg => ({
           role: msg.role,
@@ -470,6 +480,8 @@ export class GeminiClient {
     onChunk?: (chunk: string) => void
   ): Promise<string> {
     await this.applyRpmDelay();
+    
+    const thinkingConfig = this.getThinkingConfig(modelName, config);
 
     try {
       // 새로운 SDK: generateContentStream 사용
@@ -481,10 +493,9 @@ export class GeminiClient {
           topP: config?.topP ?? 0.9,
           topK: config?.topK ?? 40,
           maxOutputTokens: config?.maxOutputTokens ?? 65536,
-          // 시스템 지침을 config에 포함
           ...(systemInstruction && { systemInstruction }),
-          // [중요] 안전 설정: BLOCK_NONE 적용
           safetySettings: DEFAULT_SAFETY_SETTINGS,
+          ...(thinkingConfig && { thinkingConfig }), 
         },
       });
 
@@ -515,23 +526,17 @@ export class GeminiClient {
    */
   async getAvailableModels(): Promise<string[]> {
     try {
-      // 새로운 SDK: client.models.list() 사용
       const response = await this.client.models.list();
       const models: string[] = [];
-      
       let modelList: any[] = [];
       
-      // Response handling for different SDK versions/responses
       if (response && typeof response === 'object') {
-        // 1. Array directly (some versions)
         if (Array.isArray(response)) {
             modelList = response;
         } 
-        // 2. Object with models property (Standard response)
         else if ('models' in response && Array.isArray((response as any).models)) {
             modelList = (response as any).models;
         }
-        // 3. Async Iterable (Pagination)
         else if (Symbol.asyncIterator in response) {
           try {
              for await (const model of (response as any)) {
@@ -546,7 +551,6 @@ export class GeminiClient {
         }
       }
 
-      // Process array if found
       for (const model of modelList) {
         if (model.name?.includes('gemini')) {
           models.push(model.name.replace('models/', ''));
@@ -567,6 +571,8 @@ export class GeminiClient {
       'gemini-1.5-pro',
       'gemini-1.5-flash',
       'gemini-1.5-flash-8b',
+      'gemini-2.5-flash',
+      'gemini-3-flash-preview',
     ];
   }
 

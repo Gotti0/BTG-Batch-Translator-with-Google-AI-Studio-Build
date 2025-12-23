@@ -25,6 +25,7 @@ import {
   SegmentedProgressBar,
   IconButton
 } from '../components';
+import ThinkingSettings from '../components/common/ThinkingSettings';
 import type { FileContent } from '../types/dtos';
 
 /**
@@ -386,6 +387,11 @@ function TranslationSettings({ mode }: { mode: 'text' | 'epub' }) {
             options={modelOptions}
             disabled={isLoadingModels}
           />
+        </div>
+
+        {/* === Thinking 모델 설정 === */}
+        <div className="md:col-span-2">
+          <ThinkingSettings />
         </div>
 
         {/* === 동적 UI 분기점 === */}
