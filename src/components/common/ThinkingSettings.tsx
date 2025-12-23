@@ -10,9 +10,12 @@ const ThinkingSettings = () => {
   const isGemini3Pro = isGemini3 && modelName.includes('pro');
   const isGemini3Flash = isGemini3 && modelName.includes('flash');
   const isGemini2_5 = modelName.includes('gemini-2.5');
+  const isGemini2_5Pro = isGemini2_5 && modelName.includes('pro');
+  const isGemini2_5Flash = isGemini2_5 && modelName.includes('flash');
+
 
   // 해당 모델이 지원하는 Level 목록 정의
-  const getSupportedLevels = () => {
+  const getSupportedLevels = (): readonly ('minimal' | 'low' | 'medium' | 'high')[] => {
     if (isGemini3Flash) return ['minimal', 'low', 'medium', 'high'];
     if (isGemini3Pro) return ['low', 'high'];
     return []; // fallback
@@ -20,13 +23,42 @@ const ThinkingSettings = () => {
 
   const levels = getSupportedLevels();
 
-  // [안전 장치] 모델 변경 시, 현재 설정된 Level이 지원되지 않는 값이면 기본값으로 재설정
+  // Gemini 2.5 모델별 Thinking Budget 설정
+  const budgetConfig = React.useMemo(() => {
+    if (isGemini2_5Pro) {
+      return {
+        min: 128,
+        max: 32768,
+        step: 128,
+        labels: ['Auto', '8k', '16k', '24k', '32k']
+      };
+    } else if (isGemini2_5Flash) {
+      return {
+        min: 0, // 0을 최소 값으로 하되, UI에서 0 입력 시 Auto (-1)로 변환
+        max: 24576,
+        step: 128,
+        labels: ['Auto', '6k', '12k', '18k', '24k']
+      };
+    }
+    return { min: 0, max: 0, step: 1, labels: ['Auto'] }; // 기본값 (사용되지 않음)
+  }, [isGemini2_5Pro, isGemini2_5Flash]);
+
+  // [안전 장치 1] Gemini 3 모델 변경 시, 현재 설정된 Level이 지원되지 않는 값이면 기본값으로 재설정
   useEffect(() => {
     if (isGemini3 && levels.length > 0 && !levels.includes(thinkingLevel)) {
-      // 예: 'minimal' 상태에서 Pro로 바꾸면 'high'로 강제 변경
       updateConfig({ thinkingLevel: 'high' });
     }
   }, [modelName, isGemini3, levels, thinkingLevel, updateConfig]);
+
+  // [안전 장치 2] Gemini 2.5 모델 변경 시, 현재 설정된 Budget이 유효 범위를 벗어나면 기본값으로 재설정
+  useEffect(() => {
+    if ((isGemini2_5Pro || isGemini2_5Flash) && thinkingBudget !== -1) { // Auto 모드가 아닐 때만 검사
+      if (thinkingBudget < budgetConfig.min || thinkingBudget > budgetConfig.max) {
+        updateConfig({ thinkingBudget: -1 }); // 유효하지 않으면 Auto로 재설정
+      }
+    }
+  }, [modelName, isGemini2_5Pro, isGemini2_5Flash, thinkingBudget, budgetConfig.min, budgetConfig.max, updateConfig]);
+
 
   if (!isGemini3 && !isGemini2_5) return null;
 
@@ -36,7 +68,7 @@ const ThinkingSettings = () => {
         <span>🧠</span>
         Thinking Model 설정
         <span className="text-[10px] font-normal text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-full">
-          {isGemini3Pro ? 'Gemini 3 Pro' : isGemini3Flash ? 'Gemini 3 Flash' : 'Gemini 2.5'}
+          {isGemini3Pro ? 'Gemini 3 Pro' : isGemini3Flash ? 'Gemini 3 Flash' : isGemini2_5Pro ? 'Gemini 2.5 Pro' : isGemini2_5Flash ? 'Gemini 2.5 Flash' : 'Gemini 3'}
         </span>
       </h3>
 
@@ -89,13 +121,13 @@ const ThinkingSettings = () => {
               {thinkingLevel === 'medium' && '• Medium: 균형 잡힌 추론과 속도'}
               {thinkingLevel === 'low' && '• Low: 기본적인 추론, 빠른 응답'}
               {thinkingLevel === 'minimal' && '• Minimal: 최소한의 추론, 가장 빠름'}
-              {!levels.includes(thinkingLevel) && '(자동 조정됨)'}
+              {!levels.includes(thinkingLevel) && thinkingLevel !== 'high' && '(자동 조정됨)'}
             </p>
           </div>
         )}
 
         {/* Case B: Gemini 2.5 (Budget) */}
-        {isGemini2_5 && (
+        {(isGemini2_5Pro || isGemini2_5Flash) && (
           <div className="flex flex-col gap-3">
             <div className="flex justify-between items-center">
                <label className="text-xs font-medium text-gray-700">생각 예산 (Token Budget)</label>
@@ -106,20 +138,25 @@ const ThinkingSettings = () => {
             
             <input
               type="range"
-              min="0"
-              max="32768"
-              step="1024"
-              value={thinkingBudget === -1 ? 0 : thinkingBudget}
+              min={budgetConfig.min}
+              max={budgetConfig.max}
+              step={budgetConfig.step}
+              value={thinkingBudget === -1 ? budgetConfig.min : thinkingBudget}
               onChange={(e) => {
                 const val = Number(e.target.value);
-                updateConfig({ thinkingBudget: val === 0 ? -1 : val });
+                // 슬라이더의 최소값이 0일 때, 0으로 설정하면 -1 (Auto)로 변환
+                if (budgetConfig.min === 0 && val === 0) {
+                  updateConfig({ thinkingBudget: -1 });
+                } else {
+                  updateConfig({ thinkingBudget: val });
+                }
               }}
               className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
             />
             <div className="flex justify-between text-[10px] text-gray-400">
-              <span>Auto</span>
-              <span>16k</span>
-              <span>32k</span>
+              {budgetConfig.labels.map((label, index) => (
+                <span key={index}>{label}</span>
+              ))}
             </div>
           </div>
         )}
@@ -129,4 +166,3 @@ const ThinkingSettings = () => {
 };
 
 export default ThinkingSettings;
-
