@@ -174,28 +174,48 @@ ${segmentText}
       return [];
     }
 
-    const prompt = this.getExtractionPrompt(segmentText, userOverridePrompt);
-
     try {
-      // [핵심 변경] responseJsonSchema를 사용하여 구조화된 출력 요청
       const rawSchema = zodToJsonSchema(glossaryResponseSchema as any);
-      
-      // Gemini API 호환성을 위해 $schema 제거 (INVALID_ARGUMENT 방지)
       const { $schema, ...jsonSchema } = rawSchema as any;
 
-      const responseText = await this.geminiClient.generateText(
-        prompt,
-        this.config.modelName,
-        undefined,
-        {
-          temperature: this.config.glossaryExtractionTemperature || 0.1, // 구조화된 출력은 낮은 온도가 유리함
-          maxOutputTokens: 8192,
-          responseMimeType: "application/json", // 필수 설정
-          responseJsonSchema: jsonSchema, // 정제된 스키마 전달
-        }
-      );
+      let responseText = "";
 
-      // 응답은 이미 JSON 문자열임이 보장됨 (하지만 짤릴 수 있음)
+      if (this.config.enableGlossaryPrefill) {
+        // Prefill mode (Chat)
+        const history = this.config.glossaryPrefillCachedHistory || [];
+        const systemInstruction = this.config.glossaryPrefillSystemInstruction;
+
+        responseText = await this.geminiClient.generateWithChat(
+          segmentText, 
+          systemInstruction,
+          history.map(h => ({ role: h.role, content: h.parts.join('\n') })),
+          this.config.modelName,
+          {
+            temperature: this.config.glossaryExtractionTemperature || 0.1,
+            responseMimeType: "application/json",
+            responseJsonSchema: jsonSchema,
+            substitutionData: {
+              "{novelText}": segmentText
+            }
+          }
+        );
+
+      } else {
+        // Standard mode
+        const prompt = this.getExtractionPrompt(segmentText, userOverridePrompt);
+        responseText = await this.geminiClient.generateText(
+          prompt,
+          this.config.modelName,
+          undefined,
+          {
+            temperature: this.config.glossaryExtractionTemperature || 0.1,
+            maxOutputTokens: 8192,
+            responseMimeType: "application/json",
+            responseJsonSchema: jsonSchema,
+          }
+        );
+      }
+      
       let parsedJson: any;
       try {
         parsedJson = JSON.parse(responseText);
@@ -209,13 +229,11 @@ ${segmentText}
              this.log('debug', `📝 원본 응답: ${responseText}`);
         }
         
-        throw error; // 용어집은 복구보다는 일단 에러를 던져서 재시도 로직이나 로그 확인 유도
+        throw error;
       }
       
-      // Zod 스키마로 유효성 검증 및 타입 추론
       const validatedData = glossaryResponseSchema.parse(parsedJson);
 
-      // DTO로 변환
       const entries = validatedData.terms.map((item, index) => ({
         id: `extracted-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
         keyword: item.keyword,
@@ -226,7 +244,7 @@ ${segmentText}
         updatedAt: new Date(),
       }));
       
-      this.log('debug', `세그먼트에서 ${entries.length}개 용어 추출됨 (Structured Output)`);
+      this.log('debug', `세그먼트에서 ${entries.length}개 용어 추출됨 (Mode: ${this.config.enableGlossaryPrefill ? 'Prefill' : 'Standard'})`);
       return entries;
 
     } catch (error) {
@@ -236,7 +254,6 @@ ${segmentText}
         return [];
       }
 
-      // Zod 파싱 에러 처리
       if (error instanceof z.ZodError) {
         this.log('error', `스키마 검증 실패: ${JSON.stringify(error.issues)}`);
       } else if (error instanceof GeminiApiException) {

@@ -9,9 +9,10 @@ import { useTranslationStore } from '../stores/translationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { FileHandler } from '../utils/fileHandler';
 import { useGlossary } from '../hooks/useGlossary';
-import { DEFAULT_GLOSSARY_EXTRACTION_PROMPT } from '../types/config';
+import { DEFAULT_GLOSSARY_EXTRACTION_PROMPT, DEFAULT_GLOSSARY_PREFILL_CACHED_HISTORY, DEFAULT_GLOSSARY_PREFILL_SYSTEM_INSTRUCTION } from '../types/config';
 import type { GlossaryEntry } from '../types/dtos';
 import { Button, IconButton, Input, Select, Checkbox, ConfirmDialog, ProgressBar, Textarea, Slider } from '../components';
+import { GlossaryPrefillSettingsEditor } from '../components/common/GlossaryPrefillSettingsEditor';
 
 /**
  * 용어집 통계 컴포넌트
@@ -428,14 +429,27 @@ function GlossaryExtractionSection() {
                   helperText="{novelText}, {target_lang_name}, {target_lang_code} 변수 사용 가능"
                 />
 
+                <div className="pt-4 border-t border-purple-200">
+                  <Checkbox
+                    label="용어집 추출 프리필 모드 사용"
+                    checked={config.enableGlossaryPrefill}
+                    onChange={(e) => updateConfig({ enableGlossaryPrefill: e.target.checked })}
+                    description="채팅 모드를 사용하여 용어집 추출의 정확성을 높입니다."
+                  />
+                  {config.enableGlossaryPrefill && <GlossaryPrefillSettingsEditor />}
+                </div>
+
                 <div className="flex justify-end">
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => updateConfig({ 
-                      glossaryChunkSize: 8000, 
+                      glossaryChunkSize: 30000, 
                       glossarySamplingRatio: 10,
-                      glossaryExtractionPrompt: DEFAULT_GLOSSARY_EXTRACTION_PROMPT 
+                      glossaryExtractionPrompt: DEFAULT_GLOSSARY_EXTRACTION_PROMPT,
+                      enableGlossaryPrefill: false,
+                      glossaryPrefillSystemInstruction: DEFAULT_GLOSSARY_PREFILL_SYSTEM_INSTRUCTION,
+                      glossaryPrefillCachedHistory: DEFAULT_GLOSSARY_PREFILL_CACHED_HISTORY
                     })}
                     className="text-purple-600 hover:bg-purple-50 text-xs h-8"
                   >

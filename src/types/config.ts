@@ -63,6 +63,11 @@ export interface AppConfig {
   glossaryTargetLanguageName: string;
   glossaryChunkSize: number;
   glossaryExtractionPrompt: string;
+
+  // 용어집 프리필 설정
+  enableGlossaryPrefill: boolean;
+  glossaryPrefillSystemInstruction: string;
+  glossaryPrefillCachedHistory: PrefillHistoryItem[];
   
   // 후처리 설정
   enablePostProcessing: boolean;
@@ -161,6 +166,42 @@ Text: \`\`\`
 Ensure your response is a list of objects, where each object has 'keyword', 'translated_keyword', 'target_language', and 'occurrence_count' fields.`;
 
 /**
+ * 기본 용어집 프리필 시스템 인스트럭션
+ */
+export const DEFAULT_GLOSSARY_PREFILL_SYSTEM_INSTRUCTION = `
+You are an expert at extracting key terms from novel segments for a glossary.
+Analyze the user's text and identify significant terms.
+Follow the user's history for examples of expected output.
+The user will provide the novel text in a variable called {novelText} or {{slot}}.
+`.trim();
+
+/**
+ * 기본 용어집 프리필 히스토리
+ */
+export const DEFAULT_GLOSSARY_PREFILL_CACHED_HISTORY: PrefillHistoryItem[] = [
+  {
+    role: 'user',
+    parts: [
+      'The following is a text segment from a novel. Please extract the key glossary terms from this text based on the output format shown in the previous turn. Novel text: {novelText}',
+    ],
+  },
+  {
+    role: 'model',
+    parts: [
+      `[
+        {
+          "keyword": "John",
+          "translated_keyword": "존",
+          "target_language": "ko",
+          "occurrence_count": 5
+        }
+      ]`
+    ],
+  },
+];
+
+
+/**
  * 기본 애플리케이션 설정
  */
 export const defaultConfig: AppConfig = {
@@ -215,6 +256,11 @@ export const defaultConfig: AppConfig = {
   glossaryChunkSize: 30000,
   glossaryExtractionPrompt: DEFAULT_GLOSSARY_EXTRACTION_PROMPT,
   
+  // 용어집 프리필 설정
+  enableGlossaryPrefill: false,
+  glossaryPrefillSystemInstruction: DEFAULT_GLOSSARY_PREFILL_SYSTEM_INSTRUCTION,
+  glossaryPrefillCachedHistory: DEFAULT_GLOSSARY_PREFILL_CACHED_HISTORY,
+
   // 후처리 설정
   enablePostProcessing: true,
   removeTranslationHeaders: true,
