@@ -2,7 +2,7 @@
 // EPUB 내 이미지에 대한 AI 주석 생성 서비스
 
 import JSZip from 'jszip';
-import { GeminiClient } from './GeminiClient';
+import { GeminiClient, GeminiApiException } from './GeminiClient';
 import { epubService } from './EpubService';
 import type { EpubNode } from '../types/epub';
 import type { AppConfig } from '../types/config';
@@ -187,6 +187,14 @@ export class ImageAnnotationService {
         } catch (error) {
           this.log('error', `이미지 주석 생성 실패 (${imageNode.imagePath}): ${error}`);
           failedImages++;
+
+          // API 관련 오류(Rate Limit 등) 발생 시 전체 작업을 중단하도록 요청
+          if (error instanceof GeminiApiException) {
+            if (!this.stopRequested) { // 중단 메시지가 한 번만 표시되도록
+              this.log('warning', 'API 오류가 발생하여 남은 이미지 주석 생성을 중단합니다.');
+              this.requestStop();
+            }
+          }
         } finally {
           processedImages++;
           onProgress?.({
