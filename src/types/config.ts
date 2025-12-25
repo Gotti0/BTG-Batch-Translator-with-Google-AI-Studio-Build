@@ -21,7 +21,7 @@ export interface AppConfig {
   // Thinking 모델 설정
   enableThinking: boolean;
   thinkingBudget: number;
-  thinkingLevel: 'minimal' | 'low' | 'medium' | 'high';
+  thinkingLevel: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH';
   
   // 처리 설정
   chunkSize: number;
@@ -213,7 +213,7 @@ export const defaultConfig: AppConfig = {
   // Thinking 모델 설정
   enableThinking: true,
   thinkingBudget: -1, // -1 for 'auto'
-  thinkingLevel: 'high',
+  thinkingLevel: 'HIGH',
 
   // 처리 설정
   chunkSize: 10000,

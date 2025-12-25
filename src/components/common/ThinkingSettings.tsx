@@ -15,9 +15,9 @@ const ThinkingSettings = () => {
 
 
   // 해당 모델이 지원하는 Level 목록 정의
-  const getSupportedLevels = (): readonly ('minimal' | 'low' | 'medium' | 'high')[] => {
-    if (isGemini3Flash) return ['minimal', 'low', 'medium', 'high'];
-    if (isGemini3Pro) return ['low', 'high'];
+  const getSupportedLevels = (): readonly ('MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH')[] => {
+    if (isGemini3Flash) return ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'];
+    if (isGemini3Pro) return ['LOW', 'HIGH'];
     return []; // fallback
   };
 
@@ -46,7 +46,7 @@ const ThinkingSettings = () => {
   // [안전 장치 1] Gemini 3 모델 변경 시, 현재 설정된 Level이 지원되지 않는 값이면 기본값으로 재설정
   useEffect(() => {
     if (isGemini3 && levels.length > 0 && !levels.includes(thinkingLevel)) {
-      updateConfig({ thinkingLevel: 'high' });
+      updateConfig({ thinkingLevel: 'HIGH' });
     }
   }, [modelName, isGemini3, levels, thinkingLevel, updateConfig]);
 
@@ -117,11 +117,11 @@ const ThinkingSettings = () => {
               ))}
             </div>
             <p className="text-[10px] text-gray-500 mt-1">
-              {thinkingLevel === 'high' && '• High: 가장 깊은 추론, 복잡한 문제 해결에 적합 (속도 느림)'}
-              {thinkingLevel === 'medium' && '• Medium: 균형 잡힌 추론과 속도'}
-              {thinkingLevel === 'low' && '• Low: 기본적인 추론, 빠른 응답'}
-              {thinkingLevel === 'minimal' && '• Minimal: 최소한의 추론, 가장 빠름'}
-              {!levels.includes(thinkingLevel) && thinkingLevel !== 'high' && '(자동 조정됨)'}
+              {thinkingLevel === 'HIGH' && '• HIGH: 가장 깊은 추론, 복잡한 문제 해결에 적합 (속도 느림)'}
+              {thinkingLevel === 'MEDIUM' && '• MEDIUM: 균형 잡힌 추론과 속도'}
+              {thinkingLevel === 'LOW' && '• LOW: 기본적인 추론, 빠른 응답'}
+              {thinkingLevel === 'MINIMAL' && '• MINIMAL: 최소한의 추론, 가장 빠름'}
+              {!levels.includes(thinkingLevel) && thinkingLevel !== 'HIGH' && '(자동 조정됨)'}
             </p>
           </div>
         )}

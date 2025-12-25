@@ -35,7 +35,7 @@ export interface GenerationConfig {
   // [추가] Thinking 모델 파라미터
   enableThinking?: boolean;
   thinkingBudget?: number;
-  thinkingLevel?: 'low' | 'high';
+  thinkingLevel?: 'MINIMAL'| 'LOW'| 'MEDIUM'| 'HIGH';
 }
 
 /**
@@ -223,7 +223,7 @@ export class GeminiClient {
     if (config?.enableThinking === false) return undefined;
     
     if (modelName.includes("gemini-3")) {
-      return { thinkingLevel: config?.thinkingLevel || "high" };
+      return { thinkingLevel: config?.thinkingLevel || "HIGH" };
     } else if (modelName.includes("gemini-2.5")) {
       // thinkingBudget이 0 또는 양수일 경우 해당 값 사용, 그렇지 않으면 -1 (Dynamic) 사용
       const budget = (config?.thinkingBudget !== undefined && config.thinkingBudget >= 0) ? config.thinkingBudget : -1;
