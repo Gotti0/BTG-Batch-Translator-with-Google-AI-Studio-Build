@@ -173,11 +173,13 @@ export class EpubService {
     // 태그 분류 정의
     const imageTags = ['img', 'svg'];
     // 말단 블록 태그: 더 이상 분해하지 않고 텍스트를 추출할 단위
-    const leafBlockTags = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre', 'hr'];
+    // [수정] p, h1-h6 등은 내부에 img를 포함할 수 있으므로, 더 이상 말단으로 취급하지 않음.
+    const leafBlockTags = ['hr'];
     // 구조 보존 태그: 내부 요소를 순회하되, 자신의 태그도 보존해야 하는 컨테이너 (네비게이션 등)
     const structuralTags = ['nav', 'ol', 'ul', 'li'];
     // 컨테이너 태그: 내부 구조에 따라 재귀 여부를 결정할 태그들
     const potentialContainerTags = [
+      'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre', // img를 포함할 수 있으므로 컨테이너로 이동
       'div', 'section', 'article', 'main', 'aside', 'header', 'footer', 
       'blockquote', 'dl', 'dt', 'dd', 'table', 'tr', 'td', 'th', 'body', 'form'
     ];
