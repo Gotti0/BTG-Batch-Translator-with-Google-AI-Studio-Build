@@ -338,6 +338,7 @@ export function useTranslation() {
         glossary_extraction_prompt: config.glossaryExtractionPrompt,
         
         enable_image_annotation: config.enableImageAnnotation,
+        epub_max_nodes_per_chunk: config.epubMaxNodesPerChunk, // EPUB 노드 설정 추가
       },
       mode: mode,
       source_text: sourceText,
@@ -463,6 +464,7 @@ export function useTranslation() {
       
       // [EPUB 설정 복구]
       enableImageAnnotation: snapshot.config.enable_image_annotation ?? config.enableImageAnnotation,
+      epubMaxNodesPerChunk: snapshot.config.epub_max_nodes_per_chunk ?? config.epubMaxNodesPerChunk,
     };
 
     updateConfig(restoredConfig);
@@ -517,7 +519,10 @@ export function useTranslation() {
         }
         addLog('info', `복원 가능한 번역 세그먼트: ${allSegments.length}개`);
         
-        const epubChunkService = new EpubChunkService(restoredConfig.chunkSize, 30);
+        const epubChunkService = new EpubChunkService(
+          restoredConfig.chunkSize,
+          restoredConfig.epubMaxNodesPerChunk
+        );
         const allNodes = restoredEpubChapters.flatMap((ch: any) => ch.nodes);
         const newChunks = epubChunkService.splitEpubNodesIntoChunks(allNodes);
         

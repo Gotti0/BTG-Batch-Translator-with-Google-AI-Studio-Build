@@ -164,6 +164,7 @@ export interface TranslationSnapshot {
 
     // EPUB 설정
     enable_image_annotation?: boolean;
+    epub_max_nodes_per_chunk?: number;
   };
   // Phase 5: 번역 모드 (text 또는 epub)
   mode?: 'text' | 'epub';
