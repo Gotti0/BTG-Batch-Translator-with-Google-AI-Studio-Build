@@ -47,12 +47,10 @@ export function GlossaryPrefillSettingsEditor() {
   };
 
   const handleResetDefaults = () => {
-    if (confirm('용어집 프리필 설정을 기본값으로 초기화하시겠습니까?')) {
       updateConfig({
         glossaryPrefillSystemInstruction: DEFAULT_GLOSSARY_PREFILL_SYSTEM_INSTRUCTION,
         glossaryPrefillCachedHistory: DEFAULT_GLOSSARY_PREFILL_CACHED_HISTORY,
       });
-    }
   };
 
   return (

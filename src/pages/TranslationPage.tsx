@@ -212,12 +212,10 @@ function PrefillSettingsEditor() {
   };
 
   const handleResetDefaults = () => {
-    if (confirm('프리필 설정을 기본값으로 초기화하시겠습니까?')) {
       updateConfig({
         prefillSystemInstruction: DEFAULT_PREFILL_SYSTEM_INSTRUCTION,
         prefillCachedHistory: DEFAULT_PREFILL_CACHED_HISTORY,
       });
-    }
   };
 
   return (
@@ -569,9 +567,7 @@ function PromptSettings() {
 
   // [추가] 초기화 핸들러 구현
   const handleResetDefaults = useCallback(() => {
-    if (confirm('번역 프롬프트를 기본값으로 초기화하시겠습니까?\n현재 작성된 내용은 사라집니다.')) {
       updateConfig({ prompts: DEFAULT_PROMPTS });
-    }
   }, [updateConfig]);
 
   return (
