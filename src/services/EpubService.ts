@@ -259,19 +259,16 @@ export class EpubService {
 
         // 3. 컨테이너 처리 (div, section, etc.)
         if (potentialContainerTags.includes(tagName)) {
-          // 내부에 블록 레벨 자식이 있는지 확인 (재귀 필요성 판단)
-          // [수정] 이미지 태그(img, svg)가 포함된 경우에도 컨테이너를 해체하고 내부로 진입해야 함
-          // 그렇지 않으면 <div><img></div> 같은 구조에서 이미지가 텍스트 취급되어 무시됨
-          const hasBlockChildren = Array.from(el.children).some(child => {
-            const t = child.tagName.toLowerCase();
-            return leafBlockTags.includes(t) || potentialContainerTags.includes(t) || imageTags.includes(t);
-          });
+          // [수정] 자식(children)만 검사하면 <a><img></a> 같은 중첩 구조를 놓침
+          // 따라서 querySelector로 모든 후손(descendant)을 검사하도록 변경
+          const blockSelector = [...leafBlockTags, ...potentialContainerTags, ...imageTags, ...structuralTags].join(',');
+          const hasBlockDescendants = el.querySelector(blockSelector) !== null;
 
-          if (hasBlockChildren) {
-            // 블록 자식이 있으면 컨테이너를 해체하고 내부로 진입
+          if (hasBlockDescendants) {
+            // 블록 자손이 있으면 컨테이너를 해체하고 내부로 진입
             traverse(el);
           } else {
-            // 블록 자식이 없으면(텍스트나 인라인만 있음) 하나의 텍스트 노드로 취급
+            // 블록 자손이 없으면(텍스트나 인라인만 있음) 하나의 텍스트 노드로 취급
             const content = this.extractPureText(el);
             if (content) {
               const deterministicId = `${fileName}_${nodeIndex++}`;
