@@ -288,6 +288,7 @@ export class GeminiClient {
 
       return text || '';
     } catch (error) {
+      console.error("API 호출 중 오류 발생 (generateText):", error);
       if (error instanceof GeminiApiException) {
         throw error;
       }
@@ -352,6 +353,7 @@ export class GeminiClient {
 
       return text;
     } catch (error) {
+      console.error("API 호출 중 오류 발생 (generateImageDescription):", error);
       if (error instanceof GeminiApiException) {
         throw error;
       }
@@ -455,6 +457,7 @@ export class GeminiClient {
 
       return text || '';
     } catch (error) {
+      console.error("API 호출 중 오류 발생 (generateWithChat):", error);
       if (error instanceof GeminiApiException) {
         throw error;
       }
@@ -512,6 +515,7 @@ export class GeminiClient {
 
       return fullText;
     } catch (error) {
+      console.error("API 호출 중 오류 발생 (generateTextStream):", error);
       if (error instanceof GeminiApiException) {
         throw error;
       }
