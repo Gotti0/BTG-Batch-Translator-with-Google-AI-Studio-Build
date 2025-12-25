@@ -1267,7 +1267,7 @@ export class TranslationService {
 
     this.log('info', `🔄 배치 분할 재시도 #${currentAttempt}: ${nodes.length}개 노드 → ${leftBatch.length}개 + ${rightBatch.length}개`);
 
-    const results: EpubNode[] = [];
+    const resultsMap = new Map<string, EpubNode>();
 
     // 5. 각 배치를 순차 처리
     for (const batch of [leftBatch, rightBatch]) {
@@ -1275,7 +1275,7 @@ export class TranslationService {
 
       try {
         const translatedBatch = await this.translateEpubChunk(batch, glossaryEntries);
-        results.push(...translatedBatch);
+        translatedBatch.forEach(node => resultsMap.set(node.id, node));
       } catch (error) {
         if (this.stopRequested) break;
 
@@ -1288,11 +1288,20 @@ export class TranslationService {
           glossaryEntries,
           currentAttempt + 1
         );
-        results.push(...retriedResults);
+        retriedResults.forEach(node => resultsMap.set(node.id, node));
       }
     }
 
-    return results;
+    // Map의 값들을 배열로 변환하고 원본 순서대로 정렬 (id는 'fileName_nodeIndex' 형태이므로 문자열 정렬이 순서를 유지함)
+    const sortedResults = Array.from(resultsMap.values()).sort((a, b) => {
+      // id에서 nodeIndex 부분만 추출하여 숫자로 비교
+      const getIdNum = (id: string) => parseInt(id.split('_').pop() || '0', 10);
+      return getIdNum(a.id) - getIdNum(b.id);
+    });
+
+    this.log('info', `✅ 배치 매핑 성공: 원본 ${nodes.length}개 노드 중 ${sortedResults.length}개로 최종 결과 구성`);
+    
+    return sortedResults;
   }
 
   /**
