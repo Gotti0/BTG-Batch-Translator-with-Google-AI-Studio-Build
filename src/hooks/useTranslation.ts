@@ -183,34 +183,61 @@ export function useTranslation() {
     isTranslatingRef.current = true;
     addLog('info', `${failedResults.length}개 실패한 청크 재번역 시작`);
 
+    const service = getOrCreateService();
+    const onProgress = (progress: TranslationJobProgress) => updateProgress(progress);
+    const onResult = (result: TranslationResult) => updateResult(result.chunkIndex, result);
+
+    const isEpubMode = inputFiles[0]?.isEpub;
+
     try {
-      const service = getOrCreateService();
-      
-      const retriedResults = await service.retryFailedChunks(
-        results,
-        (progress) => updateProgress(progress),
-        (result) => {
-          updateResult(result.chunkIndex, result);
+      let retriedResults;
+
+      if (isEpubMode) {
+        // EPUB 모드 재시도
+        const allNodes = inputFiles[0]?.epubChapters?.flatMap((ch: any) => ch.nodes) || [];
+        if (allNodes.length === 0) {
+          throw new Error('EPUB 재시도 실패: 원본 노드 정보를 찾을 수 없습니다.');
         }
-      );
+        addLog('info', 'EPUB 모드로 재번역을 실행합니다.');
+        retriedResults = await service.retryFailedEpubChunks(
+          results,
+          allNodes,
+          onProgress,
+          onResult
+        );
+      } else {
+        // 텍스트 모드 재시도
+        addLog('info', '텍스트 모드로 재번역을 실행합니다.');
+        retriedResults = await service.retryFailedChunks(
+          results,
+          onProgress,
+          onResult
+        );
+      }
 
       // 결과 업데이트 (최종 동기화)
       setResults(retriedResults);
       
-      // 텍스트 재합성
-      const combinedText = TranslationService.combineResults(retriedResults);
-      setTranslatedText(combinedText);
+      // EPUB 모드가 아닐 때만 텍스트 재합성
+      if (!isEpubMode) {
+        const combinedText = TranslationService.combineResults(retriedResults);
+        setTranslatedText(combinedText);
+      }
 
       const newSuccessCount = retriedResults.filter(r => r.success).length;
-      addLog('info', `재번역 완료: ${newSuccessCount}/${failedResults.length}개 성공`);
+      const totalRetried = failedResults.length;
+      const finalSuccessCount = retriedResults.filter(r => !results.find(pr => pr.chunkIndex === r.chunkIndex)?.success && r.success).length;
+
+      addLog('info', `재번역 완료: ${finalSuccessCount}/${totalRetried}개 청크 재번역 성공`);
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       addLog('error', `재번역 중 오류: ${errorMessage}`);
     } finally {
       isTranslatingRef.current = false;
+      stopTranslation(); // isRunning 상태를 false로 변경
     }
-  }, [results, getOrCreateService, updateProgress, setResults, updateResult, setTranslatedText, addLog]);
+  }, [results, inputFiles, getOrCreateService, updateProgress, setResults, updateResult, setTranslatedText, addLog, stopTranslation]);
 
   // [NEW] 단일 청크 즉시 재번역
   const retrySingleChunk = useCallback(async (chunkIndex: number) => {
