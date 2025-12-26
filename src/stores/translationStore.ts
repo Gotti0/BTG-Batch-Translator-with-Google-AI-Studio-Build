@@ -179,11 +179,21 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   
   setResults: (results) => set({ results }),
   
-  updateResult: (chunkIndex, updates) => set((state) => ({
-    results: state.results.map((r) =>
-      r.chunkIndex === chunkIndex ? { ...r, ...updates } : r
-    ),
-  })),
+  updateResult: (chunkIndex, updates) => {
+    // [DEBUG] 3. Store가 수신한 데이터 확인
+    console.log(`[DEBUG 3/3] Store received updateResult for chunk ${chunkIndex}`, {
+      updates,
+      segmentsCount: updates.translatedSegments?.length,
+      sampleSegment: updates.translatedSegments?.[0]?.slice(0, 50)
+    });
+    console.log('[DEBUG 3/3] Full updates object:', JSON.parse(JSON.stringify(updates)));
+
+    set((state) => ({
+      results: state.results.map((r) =>
+        r.chunkIndex === chunkIndex ? { ...r, ...updates } : r
+      ),
+    }));
+  },
   
   clearResults: () => set({ 
     results: [],

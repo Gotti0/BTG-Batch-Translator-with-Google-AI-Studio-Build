@@ -914,20 +914,39 @@ export class TranslationService {
               chunks[i],
               glossaryEntries
             );
+
+            // [DEBUG] 1. translateEpubChunk의 직접적인 반환 값 확인
+            console.log(`[DEBUG 1/3] 청크 ${i+1} Raw Result from translateEpubChunk`, { 
+              nodeCount: translated.length,
+              sampleContent: translated.length > 0 ? translated[0].content?.slice(0, 50) : 'N/A'
+            });
+            console.log('[DEBUG 1/3] Full raw result object:', JSON.parse(JSON.stringify(translated)));
+
+
             chunkResults.set(i, translated);
             successfulChunks++;
             this.log('info', `✅ 청크 ${i + 1}/${chunks.length} 완료`);
 
             // [추가] 실시간 결과 보고
             if (onResult) {
-              onResult({
+              const resultPayload: TranslationResult = {
                 chunkIndex: i,
                 originalText: chunks[i].map(n => n.content || '').join('\n\n'),
                 translatedText: translated.map(n => n.content || '').join('\n\n'),
                 // [추가] 구조적 저장용 데이터 (순수한 콘텐츠 배열)
                 translatedSegments: translated.map(n => n.content || ''),
                 success: true
+              };
+              
+              // [DEBUG] 2. Store로 전송될 데이터 확인
+              console.log(`[DEBUG 2/3] 청크 ${i+1} Payload for onResult`, {
+                chunkIndex: resultPayload.chunkIndex,
+                segmentsCount: resultPayload.translatedSegments?.length,
+                sampleSegment: resultPayload.translatedSegments?.[0]?.slice(0, 50)
               });
+              console.log('[DEBUG 2/3] Full payload object:', JSON.parse(JSON.stringify(resultPayload)));
+
+              onResult(resultPayload);
             }
           } catch (error) {
             // 중단 요청 시 재시도 하지 않음
