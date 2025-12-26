@@ -1034,47 +1034,33 @@ export class TranslationService {
   }
 
   /**
-   * EPUB 노드 배치 번역 (단순화된 버전)
-   * * 전략:
-   * 1. API 요청
-   * 2. JSON 파싱 시도
-   * 3. [신규] 데이터 누락 감지 및 누락분에 대한 재귀 재시도
-   * 4. 실패 시 즉시 에러 throw -> 상위의 '분할 정복 재시도' 로직이 받아서 처리
-   * @param currentAttempt - 내부 재귀 호출을 위한 시도 횟수
+   * EPUB 노드 배치 번역 (디버깅 로그 추가 버전)
    */
   private async translateEpubChunk(
     nodes: EpubNode[],
     glossaryEntries?: GlossaryEntry[],
     currentAttempt: number = 1
   ): Promise<EpubNode[]> {
-    // 1. 텍스트 노드만 필터링
     const textNodes = nodes.filter((n) => n.type === 'text');
 
     if (textNodes.length === 0) {
-      return nodes; // 텍스트 노드 없음 → 원본 반환
+      return nodes;
     }
     
-    // 재귀 탈출 조건
     const MAX_RETRIES = this.config.maxRetryAttempts;
     if (currentAttempt > MAX_RETRIES) {
-      this.log('error', `❌ 최대 재시도(${MAX_RETRIES}) 도달: ${textNodes.length}개 노드 번역 실패. 원문 유지.`);
+      this.log('error', `❌ 최대 재시도(${MAX_RETRIES}) 도달: ${textNodes.length}개 노드 번역 실패.`);
       return nodes;
     }
 
-
-    // 2. 요청 데이터 구성 (JSON 변환)
     const requestData = textNodes.map((n) => ({
       id: n.id,
       text: n.content,
     }));
     
-    // 텍스트 노드들을 JSON 문자열로 직렬화 (이것이 {{slot}}에 들어감)
     const jsonString = JSON.stringify(requestData, null, 2);
-
-    // 3. 프롬프트 및 컨텍스트 준비
     const { prompt, glossaryContext } = this.preparePromptAndContext(jsonString, 0);
 
-    // 4. JSON Schema 설정 (구조화된 출력 강제)
     const config: GenerationConfig = {
       temperature: this.config.temperature,
       topP: this.config.topP,
@@ -1092,70 +1078,41 @@ export class TranslationService {
       },
     };
 
-    // [추가] 취소 컨트롤러 설정
     let cancelThisRequest: (() => void) | undefined;
     const cancelPromise = new Promise<string>((_, reject) => {
-      cancelThisRequest = () => {
-        reject(new Error('CANCELLED_BY_USER'));
-      };
+      cancelThisRequest = () => { reject(new Error('CANCELLED_BY_USER')); };
     });
-
-    if (cancelThisRequest) {
-      this.cancelControllers.add(cancelThisRequest);
-    }
+    if (cancelThisRequest) this.cancelControllers.add(cancelThisRequest);
 
     try {
       let responseText: string;
       let apiPromise: Promise<string>;
 
-      // 5. API 호출 (Prefill 설정 적용)
       if (this.config.enablePrefillTranslation) {
-        // 채팅 모드 (프리필 히스토리 주입)
         const rawHistory = this.config.prefillCachedHistory.map(item => ({
           role: item.role,
           content: item.parts.join('\n'),
         }));
-        
-        // [수정] API 제약 준수를 위한 교대 역할 병합 실행
         const chatHistory = this.mergeConsecutiveRoles(rawHistory);
-
-        // [추가] 치환 데이터 구성
-        const substitutionData = {
-          '{{slot}}': jsonString,
-          '{{glossary_context}}': glossaryContext
-        };
+        const substitutionData = { '{{slot}}': jsonString, '{{glossary_context}}': glossaryContext };
 
         apiPromise = this.geminiClient.generateWithChat(
-          prompt,
-          this.config.prefillSystemInstruction,
-          chatHistory,
-          this.config.modelName,
-          {
-            ...config,
-            substitutionData // [추가]
-          }
+          prompt, this.config.prefillSystemInstruction, chatHistory, this.config.modelName,
+          { ...config, substitutionData }
         );
       } else {
-        // 일반 모드
-        apiPromise = this.geminiClient.generateText(
-          prompt,
-          this.config.modelName,
-          this.config.prefillSystemInstruction,
-          config
-        );
+        apiPromise = this.geminiClient.generateText(prompt, this.config.modelName, this.config.prefillSystemInstruction, config);
       }
 
-      // [변경] API 호출과 취소 요청 경합
       responseText = await Promise.race([apiPromise, cancelPromise]);
       const translations: Array<{ id: string; translated_text: string }> = JSON.parse(responseText);
       const translationMap = new Map(translations.map((t) => [t.id, t.translated_text]));
       
-      // --- START: 데이터 누락 감지 및 재귀 재시도 로직 ---
+      // --- START: 데이터 누락 감지 및 재귀 재시도 로직 (디버깅 강화) ---
 
       const successfullyTranslatedNodes: EpubNode[] = [];
       const missingNodes: EpubNode[] = [];
 
-      // 요청한 텍스트 노드를 '성공'과 '누락'으로 분류
       for (const node of textNodes) {
         if (translationMap.has(node.id)) {
           successfullyTranslatedNodes.push({
@@ -1168,26 +1125,53 @@ export class TranslationService {
       }
 
       let retriedNodes: EpubNode[] = [];
-      // 누락된 노드가 있으면, 누락분만 재귀적으로 재시도
+      
+      // [디버깅] 누락 발생 시 상세 로그 출력
       if (missingNodes.length > 0) {
-        this.log('warning', `⚠️ 응답 누락: ${missingNodes.length}/${textNodes.length}개 노드. 재시도합니다 (시도 ${currentAttempt}).`);
+        this.log('warning', `⚠️ [Debug:Attempt-${currentAttempt}] 응답 누락 감지: 전체 ${textNodes.length} 중 ${missingNodes.length}개 누락.`);
+        this.log('debug', `   - 누락된 IDs: ${missingNodes.map(n => n.id).join(', ')}`);
+        
+        // 재귀 호출
         retriedNodes = await this.translateEpubChunk(
-          missingNodes, // 누락된 노드만 재시도
+          missingNodes, 
           glossaryEntries,
-          currentAttempt + 1 // 재시도 횟수 증가
+          currentAttempt + 1 
         );
+
+        // [디버깅] 재귀 호출 결과 검증
+        this.log('info', `✅ [Debug:Attempt-${currentAttempt}] 재귀 호출 복귀: ${retriedNodes.length}개 노드 수신됨.`);
+        
+        // 혹시 재귀 결과에서 ID가 꼬였는지 확인 (샘플 로깅)
+        if (retriedNodes.length > 0) {
+             const sample = retriedNodes[0];
+             this.log('debug', `   - 재귀 결과 샘플(ID: ${sample.id}): "${sample.content?.slice(0, 30)}..."`);
+        }
       }
 
-      // 이번 실행에서 성공한 노드와, 재귀 호출을 통해 얻은 노드를 합침
       const combinedTranslatedNodes = [...successfullyTranslatedNodes, ...retriedNodes];
       const finalTranslationMap = new Map(combinedTranslatedNodes.map(n => [n.id, n.content]));
 
-      // 원본 `nodes` 배열을 기준으로 최종 번역 결과를 반영하여 반환
+      // [디버깅] 최종 매핑 검증
+      if (missingNodes.length > 0) {
+         this.log('debug', `🔍 [Debug:Attempt-${currentAttempt}] 최종 병합: 성공(${successfullyTranslatedNodes.length}) + 재시도(${retriedNodes.length}) = 합계(${combinedTranslatedNodes.length})`);
+      }
+
       return nodes.map(originalNode => {
         if (finalTranslationMap.has(originalNode.id)) {
-          return { ...originalNode, content: finalTranslationMap.get(originalNode.id)! };
+          const content = finalTranslationMap.get(originalNode.id)!;
+          
+          // [디버깅] 중복 작성 의심 구간 확인
+          // 원본 텍스트가 번역문에 포함되어 있는지 확인 (단순 포함 여부만 체크)
+          if (missingNodes.some(mn => mn.id === originalNode.id)) {
+              if (content.includes(originalNode.content!) && content.length > originalNode.content!.length * 1.5) {
+                   this.log('warning', `🚨 [중복 의심] 재귀 번역된 노드(ID: ${originalNode.id})에 원문이 포함된 것 같습니다.`);
+                   this.log('debug', `   - 원문: ${originalNode.content?.slice(0, 20)}...`);
+                   this.log('debug', `   - 번역: ${content.slice(0, 20)}...`);
+              }
+          }
+
+          return { ...originalNode, content };
         }
-        // 번역 대상이 아니었거나, 모든 재시도 후에도 실패한 노드는 원문 그대로 반환
         return originalNode;
       });
       // --- END: 데이터 누락 감지 및 재귀 재시도 로직 ---
@@ -1195,28 +1179,21 @@ export class TranslationService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      // [추가] 429 Rate Limit 에러 감지 시 번역 중단
       if (GeminiClient.isRateLimitError(error as Error)) {
         this.log('error', `API 할당량 초과(429) 감지. 번역 작업을 중단합니다.`);
         this.requestStop();
         throw error;
       }
 
-      // [추가] 사용자 중단 처리
       if (errorMessage === 'CANCELLED_BY_USER') {
         this.log('warning', `EPUB 청크 번역 중단됨 (사용자 요청)`);
         throw error;
       }
 
-      // 로그만 남기고 에러를 상위로 그대로 던짐
-      // 상위의 `retryEpubNodesWithSmallerBatches` 함수가 이 에러를 받아 분할/재시도 처리함.
       this.log('warning', `⚠️ 청크 번역/파싱 실패. 분할 재시도를 위해 에러를 상위로 전달합니다.`);
       throw error;
     } finally {
-      // [추가] 완료 후 취소 핸들러 제거
-      if (cancelThisRequest) {
-        this.cancelControllers.delete(cancelThisRequest);
-      }
+      if (cancelThisRequest) this.cancelControllers.delete(cancelThisRequest);
     }
   }
 
