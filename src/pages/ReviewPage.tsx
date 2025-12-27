@@ -522,7 +522,18 @@ export function ReviewPage() {
 
   // 필터링된 결과
   const filteredResults = useMemo(() => {
+    // 1. 원본 결과 복사 및 정렬
     let sorted = [...results].sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+    // [추가] 2. 뷰 레벨 중복 제거 (방어 코드)
+    const uniqueMap = new Map<number, TranslationResult>();
+    sorted.forEach(item => {
+        // Map은 키 중복 시 덮어쓰므로, 결과적으로 마지막 항목이 남음
+        uniqueMap.set(item.chunkIndex, item);
+    });
+    sorted = Array.from(uniqueMap.values()).sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+    // 3. 필터 적용
     switch (filter) {
       case 'success':
         sorted = sorted.filter(r => r.success);

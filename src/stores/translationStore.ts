@@ -155,8 +155,13 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   
   // 세션 복구 액션
   restoreSession: (files, results, progress) => {
+    // 중복 제거: chunkIndex 기준
+    const uniqueResultsMap = new Map();
+    results.forEach(r => uniqueResultsMap.set(r.chunkIndex, r));
+    const uniqueResults = Array.from(uniqueResultsMap.values());
+
     // 번역된 텍스트 합치기
-    const sortedResults = [...results].sort((a, b) => a.chunkIndex - b.chunkIndex);
+    const sortedResults = [...uniqueResults].sort((a, b) => a.chunkIndex - b.chunkIndex);
     const combinedText = sortedResults
       .filter(r => r.success)
       .map(r => r.translatedText)
@@ -164,7 +169,7 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
       
     set({
       inputFiles: files,
-      results: results,
+      results: uniqueResults,
       progress: progress,
       translatedText: combinedText,
       isRunning: false,
@@ -173,9 +178,22 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   },
   
   // === 결과 액션 ===
-  addResult: (result) => set((state) => ({
-    results: [...state.results, result],
-  })),
+  addResult: (result) => set((state) => {
+    // 이미 존재하는 chunkIndex인지 확인
+    const existingIndex = state.results.findIndex(r => r.chunkIndex === result.chunkIndex);
+    
+    if (existingIndex !== -1) {
+      // 이미 존재하면 교체 (Update)
+      const newResults = [...state.results];
+      newResults[existingIndex] = result;
+      return { results: newResults };
+    }
+    
+    // 없으면 추가 (Append)
+    return {
+      results: [...state.results, result],
+    };
+  }),
   
   setResults: (results) => set({ results }),
   
