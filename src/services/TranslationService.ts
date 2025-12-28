@@ -1282,9 +1282,11 @@ export class TranslationService {
 
       for (const node of textNodes) {
         if (translationMap.has(node.id)) {
+          // [수정] 줄바꿈 문자를 <br/> 태그로 치환 (XML에서 줄바꿈 보존을 위함)
+          const translatedText = translationMap.get(node.id)!;
           successfullyTranslatedNodes.push({
             ...node,
-            content: translationMap.get(node.id)!,
+            content: translatedText.replace(/\n/g, '<br/>'),
           });
         } else {
           missingNodes.push(node);
@@ -1465,7 +1467,9 @@ export class TranslationService {
         const newTextNodes = newNodes.filter((n: EpubNode) => n.type === 'text');
 
         newTextNodes.forEach((node: EpubNode, idx: number) => {
-          node.content = segments[idx];
+          // [수정] 줄바꿈 보존을 위해 치환 처리
+          const content = segments[idx] || '';
+          node.content = content.includes('<br/>') ? content : content.replace(/\n/g, '<br/>');
         });
         return newNodes;
       }
@@ -1478,7 +1482,8 @@ export class TranslationService {
           // 텍스트 노드인 경우에만 내용을 덮어씀 (비텍스트는 원본 유지하거나, 저장된 값 사용)
           // 저장된 값이 공백("")인 경우가 많으므로, 텍스트 노드일 때만 적용하는 것이 안전함
           if (node.type === 'text') {
-             node.content = segments[idx];
+             const content = segments[idx] || '';
+             node.content = content.includes('<br/>') ? content : content.replace(/\n/g, '<br/>');
           }
         });
         return newNodes;
@@ -1502,7 +1507,8 @@ export class TranslationService {
       const newTextNodes = newNodes.filter((n: EpubNode) => n.type === 'text');
 
       newTextNodes.forEach((node: EpubNode, idx: number) => {
-        node.content = segments[idx];
+        const content = segments[idx] || '';
+        node.content = content.includes('<br/>') ? content : content.replace(/\n/g, '<br/>');
       });
 
       return newNodes;
