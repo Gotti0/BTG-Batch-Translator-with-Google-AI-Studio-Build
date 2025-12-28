@@ -164,6 +164,34 @@ ${segmentText}
   }
 
   /**
+   * 불완전한 JSON 응답에서 유효한 용어집 항목을 복구합니다.
+   */
+  private recoverGlossaryFromPartialJson(jsonString: string): any[] {
+    const validItems: any[] = [];
+    
+    // 단순 객체 패턴({ ... })을 찾습니다. 
+    // 현재 용어집 스키마는 중첩 객체가 없는 Flat한 구조이므로, 
+    // 중괄호 쌍을 찾는 정규식으로 개별 항목을 추출할 수 있습니다.
+    const regex = /\{[^{}]+\}/g;
+    const matches = jsonString.match(regex);
+
+    if (!matches) return [];
+
+    for (const match of matches) {
+      try {
+        const item = JSON.parse(match);
+        // 필수 필드가 있는지 느슨하게 검사합니다.
+        if (item.keyword && item.translated_keyword) {
+          validItems.push(item);
+        }
+      } catch (e) {
+        // 개별 항목 파싱 실패는 무시하고 계속 진행합니다.
+      }
+    }
+    return validItems;
+  }
+
+  /**
    * 단일 세그먼트에서 용어집 추출 (Structured Output 적용)
    */
   private async extractFromSegment(
@@ -220,16 +248,24 @@ ${segmentText}
       try {
         parsedJson = JSON.parse(responseText);
       } catch (error) {
-        this.log('warning', `⚠️ 용어집 JSON 파싱 실패.`);
+        this.log('warning', `⚠️ 용어집 JSON 파싱 실패. 부분 복구를 시도합니다.`);
         
-        if (responseText.length > 500) {
-             this.log('debug', `📝 원본 응답(앞부분): ${responseText.slice(0, 200)} ...`);
-             this.log('debug', `📝 원본 응답(뒷부분): ... ${responseText.slice(-200)}`);
+        const recoveredItems = this.recoverGlossaryFromPartialJson(responseText);
+
+        if (recoveredItems.length > 0) {
+          this.log('info', `✅ 불완전한 JSON 데이터에서 ${recoveredItems.length}개의 항목을 성공적으로 복구했습니다.`);
+          parsedJson = { terms: recoveredItems };
         } else {
-             this.log('debug', `📝 원본 응답: ${responseText}`);
+          this.log('error', `❌ 복구 실패: 유효한 JSON 객체를 찾을 수 없습니다.`);
+          
+          if (responseText.length > 500) {
+               this.log('debug', `📝 원본 응답(앞부분): ${responseText.slice(0, 200)} ...`);
+               this.log('debug', `📝 원본 응답(뒷부분): ... ${responseText.slice(-200)}`);
+          } else {
+               this.log('debug', `📝 원본 응답: ${responseText}`);
+          }
+          throw error;
         }
-        
-        throw error;
       }
       
       const validatedData = glossaryResponseSchema.parse(parsedJson);
