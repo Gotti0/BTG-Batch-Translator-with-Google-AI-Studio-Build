@@ -71,7 +71,10 @@ export class EpubService {
 
       for (const idref of itemsToProcess) {
         const manifestItem = manifestItems.find((item) => item.id === idref);
-        if (!manifestItem || !manifestItem.href.endsWith('.xhtml')) {
+        // [수정] .html, .htm 확장자도 허용
+        if (!manifestItem || !/\.(xhtml|html|htm)$/i.test(manifestItem.href)) {
+          // 추가로 media-type이 application/xhtml+xml 인지 확인하면 더 정확하겠지만, 
+          // 일반적으로 확장자로 1차 필터링함.
           continue;
         }
 
