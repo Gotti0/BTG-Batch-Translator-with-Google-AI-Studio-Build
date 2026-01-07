@@ -35,6 +35,7 @@ export class TextNodeService {
 
   /**
    * Rebuild text by overlaying translated nodes onto the original lines, preserving empty lines.
+   * Also converts <br/> tags to actual newline characters for plain text output.
    */
   reconstruct(translatedNodes: TextNode[], originalLines: string[]): string {
     const lines = [...originalLines];
@@ -44,7 +45,15 @@ export class TextNodeService {
       while (node.lineIndex >= lines.length) {
         lines.push('');
       }
-      lines[node.lineIndex] = node.content ?? '';
+      
+      // [추가] <br/> 태그를 줄바꿈 문자로 변환
+      // 텍스트 파일은 HTML이 아니므로 <br/> 태그를 실제 \n으로 변환
+      // 이스케이프된 형태(&lt;br/&gt;)와 일반 형태(<br/>) 모두 처리
+      let content = node.content ?? '';
+      content = content.replace(/&lt;br\s*\/?\s*&gt;/gi, '\n'); // 이스케이프된 형태
+      content = content.replace(/<br\s*\/?\s*>/gi, '\n');        // 일반 형태
+      
+      lines[node.lineIndex] = content;
     }
     return lines.join('\n');
   }
