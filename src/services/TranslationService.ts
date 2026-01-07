@@ -932,6 +932,200 @@ export class TranslationService {
   }
 
   /**
+   * [NEW] 무결성 모드 실패 청크만 재번역
+   * 
+   * @param results - 전체 번역 결과
+   * @param fullText - 원본 전체 텍스트 (줄 단위 노드 재생성용)
+   * @param onProgress - 진행률 콜백
+   * @param onResult - (옵션) 실시간 업데이트를 위한 콜백
+   */
+  async retryFailedIntegrityChunks(
+    results: TranslationResult[],
+    fullText: string,
+    onProgress?: ProgressCallback,
+    onResult?: (result: TranslationResult) => void
+  ): Promise<{ text: string; results: TranslationResult[] }> {
+    const failedResults = results.filter(r => !r.success);
+    
+    if (failedResults.length === 0) {
+      this.log('info', '재시도할 실패한 청크가 없습니다.');
+      // 기존 결과로 텍스트 복원
+      const { nodes, originalLines } = this.textNodeService.parse(fullText);
+      const reconstructed = this.textNodeService.reconstruct(
+        nodes.sort((a, b) => a.lineIndex - b.lineIndex),
+        originalLines
+      );
+      return { text: reconstructed, results };
+    }
+
+    this.log('info', `🔒 무결성 모드 ${failedResults.length}개 실패 청크 재번역 시작`);
+    this.resetStop();
+
+    // 1. 원본 텍스트를 다시 줄 단위 노드로 파싱
+    const { nodes: allNodes, originalLines } = this.textNodeService.parse(fullText);
+
+    // 2. 청크 재분할 (원본과 동일한 방식)
+    const epubChunkService = new EpubChunkService(
+      this.config.chunkSize,
+      this.config.epubMaxNodesPerChunk
+    );
+    const originalChunks = epubChunkService.splitEpubNodesIntoChunks(allNodes);
+
+    const progress: TranslationJobProgress = {
+      totalChunks: failedResults.length,
+      processedChunks: 0,
+      successfulChunks: 0,
+      failedChunks: 0,
+      currentStatusMessage: '무결성 모드 재번역 시작...',
+      etaSeconds: 0,
+    };
+
+    onProgress?.(progress);
+
+    const updatedResults = [...results];
+    const maxWorkers = this.config.maxWorkers || 1;
+    const processingPromises = new Set<Promise<void>>();
+    const startTime = Date.now();
+
+    // 3. 번역된 노드를 누적할 맵 (기존 성공 노드 + 새로 번역할 노드)
+    const translatedNodeMap = new Map<string, TextNode>();
+    
+    // 기존 성공한 결과의 노드들을 맵에 추가
+    results.forEach(result => {
+      if (result.success && result.translatedSegments) {
+        const chunkNodes = originalChunks[result.chunkIndex] || [];
+        result.translatedSegments.forEach((segment, idx) => {
+          const node = chunkNodes[idx] as TextNode;
+          if (node && node.id) {
+            translatedNodeMap.set(node.id, {
+              ...node,
+              content: segment
+            });
+          }
+        });
+      }
+    });
+
+    for (const failedResult of failedResults) {
+      if (this.stopRequested) break;
+      
+      const chunkIndex = failedResult.chunkIndex;
+      const nodesToRetry = originalChunks[chunkIndex];
+
+      if (!nodesToRetry) {
+        this.log('error', `무결성 재시도 오류: 청크 인덱스 ${chunkIndex}에 해당하는 원본 노드를 찾을 수 없습니다.`);
+        continue;
+      }
+
+      const task = (async () => {
+        if (this.stopRequested) return;
+
+        progress.currentStatusMessage = `무결성 청크 ${chunkIndex + 1} 재번역 중...`;
+        progress.currentChunkProcessing = chunkIndex;
+        onProgress?.(progress);
+
+        let newTranslatedNodes: EpubNode[];
+        let success = false;
+        
+        try {
+          newTranslatedNodes = await this.translateEpubChunk(nodesToRetry, this.glossaryEntries);
+          success = true;
+        } catch (error) {
+          if (this.stopRequested) {
+            newTranslatedNodes = nodesToRetry;
+          } else {
+            this.log('warning', `⚠️ 무결성 청크 ${chunkIndex + 1} 재번역 실패. 분할 정복 시작...`);
+            newTranslatedNodes = await this.retryEpubNodesWithSmallerBatches(
+              nodesToRetry,
+              chunkIndex,
+              this.glossaryEntries,
+              1
+            );
+            success = true;
+          }
+        }
+
+        if (this.stopRequested) return;
+
+        // 번역된 노드를 맵에 업데이트
+        newTranslatedNodes.forEach(node => {
+          if (node.id) {
+            translatedNodeMap.set(node.id, node as TextNode);
+          }
+        });
+
+        // TranslationResult 객체 생성
+        const newResult: TranslationResult = {
+          chunkIndex,
+          originalText: nodesToRetry.map(n => n.content || '').join('\n'),
+          translatedText: newTranslatedNodes.map(n => n.content || '').join('\n'),
+          translatedSegments: newTranslatedNodes.map(n => n.content || ''),
+          success,
+          error: success ? undefined : '재시도 실패',
+        };
+
+        // 결과 배열 업데이트
+        const index = updatedResults.findIndex(r => r.chunkIndex === chunkIndex);
+        if (index >= 0) {
+          updatedResults[index] = newResult;
+        }
+
+        onResult?.(newResult);
+
+        // 진행률 업데이트
+        progress.processedChunks++;
+        if (success) {
+          progress.successfulChunks++;
+        } else {
+          progress.failedChunks++;
+          progress.lastErrorMessage = newResult.error;
+        }
+        
+        const now = Date.now();
+        const elapsedSeconds = (now - startTime) / 1000;
+        if (progress.processedChunks > 0) {
+          const avgTimePerChunk = elapsedSeconds / progress.processedChunks;
+          const remainingChunks = progress.totalChunks - progress.processedChunks;
+          progress.etaSeconds = Math.ceil(avgTimePerChunk * remainingChunks);
+        }
+        onProgress?.(progress);
+
+      })();
+
+      processingPromises.add(task);
+      task.then(() => processingPromises.delete(task));
+
+      if (processingPromises.size >= maxWorkers) {
+        await Promise.race(processingPromises);
+      }
+    }
+
+    await Promise.all(processingPromises);
+
+    progress.currentStatusMessage = '무결성 재번역 완료';
+    progress.currentChunkProcessing = undefined;
+    progress.etaSeconds = 0;
+    onProgress?.(progress);
+
+    // 4. 모든 노드를 ID 기준으로 정렬하여 배열로 변환
+    const sortedTranslatedNodes = Array.from(translatedNodeMap.values())
+      .sort((a, b) => a.lineIndex - b.lineIndex);
+
+    // 5. 최종 텍스트 복원
+    const reconstructed = this.textNodeService.reconstruct(
+      sortedTranslatedNodes,
+      originalLines
+    );
+
+    this.log('info', `무결성 재번역 완료: 성공 ${progress.successfulChunks}개, 실패 ${progress.failedChunks}개`);
+
+    return { 
+      text: reconstructed, 
+      results: updatedResults.sort((a, b) => a.chunkIndex - b.chunkIndex) 
+    };
+  }
+
+  /**
    * [NEW] 실패한 EPUB 청크만 재번역 (병렬 처리 및 구조 유지)
    *
    * @param results - 전체 번역 결과

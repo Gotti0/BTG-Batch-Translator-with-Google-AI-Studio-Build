@@ -210,6 +210,7 @@ export function useTranslation() {
 
     try {
       let retriedResults;
+      let reconstructedText: string | undefined;
 
       if (isEpubMode) {
         // EPUB 모드 재시도
@@ -224,8 +225,22 @@ export function useTranslation() {
           onProgress,
           onResult
         );
+      } else if (translationMode === 'integrity') {
+        // 🔒 무결성 모드 재시도
+        addLog('info', '🔒 무결성 모드로 재번역을 실행합니다.');
+        const fullText = inputFiles.map(f => f.content).join('\n\n');
+        
+        const { text, results: integrityResults } = await service.retryFailedIntegrityChunks(
+          results,
+          fullText,
+          onProgress,
+          onResult
+        );
+        
+        retriedResults = integrityResults;
+        reconstructedText = text;
       } else {
-        // 텍스트 모드 재시도
+        // 기본 텍스트 모드 재시도
         addLog('info', '텍스트 모드로 재번역을 실행합니다.');
         retriedResults = await service.retryFailedChunks(
           results,
@@ -237,10 +252,16 @@ export function useTranslation() {
       // 결과 업데이트 (최종 동기화)
       setResults(retriedResults);
       
-      // EPUB 모드가 아닐 때만 텍스트 재합성
+      // 텍스트 재합성
       if (!isEpubMode) {
-        const combinedText = TranslationService.combineResults(retriedResults);
-        setTranslatedText(combinedText);
+        if (translationMode === 'integrity' && reconstructedText) {
+          // 무결성 모드: 이미 복원된 텍스트 사용
+          setTranslatedText(reconstructedText);
+        } else {
+          // 기본 모드: 결과 조합
+          const combinedText = TranslationService.combineResults(retriedResults);
+          setTranslatedText(combinedText);
+        }
       }
 
       const newSuccessCount = retriedResults.filter(r => r.success).length;
@@ -256,7 +277,7 @@ export function useTranslation() {
       isTranslatingRef.current = false;
       stopTranslation(); // isRunning 상태를 false로 변경
     }
-  }, [results, inputFiles, getOrCreateService, updateProgress, setResults, updateResult, setTranslatedText, addLog, stopTranslation]);
+  }, [results, inputFiles, getOrCreateService, updateProgress, setResults, updateResult, setTranslatedText, addLog, stopTranslation, translationMode]);
 
   // [NEW] 단일 청크 즉시 재번역
   const retrySingleChunk = useCallback(async (chunkIndex: number) => {
