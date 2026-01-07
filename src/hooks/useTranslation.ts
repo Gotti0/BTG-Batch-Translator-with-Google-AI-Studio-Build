@@ -38,6 +38,7 @@ export function useTranslation() {
     combineResultsToText, // 텍스트 재합성 함수 가져오기
     addLog,
     restoreSession,
+    translationMode,
   } = useTranslationStore();
 
   // 서비스 인스턴스 참조
@@ -102,29 +103,46 @@ export function useTranslation() {
         addResult(result);
       };
 
-      // 번역 실행
-      const translationResults = await service.translateText(
-        fullText, 
-        onProgress, 
-        existingResults,
-        onResult
-      );
+      if (translationMode === 'integrity') {
+        addLog('info', '🔒 무결성 보장 모드로 번역을 시작합니다. (줄 단위 노드)');
 
-      // 결과 저장 (최종 동기화 보장)
-      setResults(translationResults);
+        const { text, results: integrityResults } = await service.translateTextWithIntegrityGuarantee(
+          fullText,
+          onProgress,
+          onResult
+        );
 
-      // 결과 텍스트 합치기
-      const combinedText = TranslationService.combineResults(translationResults);
-      setTranslatedText(combinedText);
+        setResults(integrityResults);
+        setTranslatedText(text);
 
-      // 완료 로그
-      const successCount = translationResults.filter(r => r.success).length;
-      const failCount = translationResults.filter(r => !r.success).length;
-      
-      addLog('info', `번역 완료: 성공 ${successCount}개, 실패 ${failCount}개`);
+        const successCount = integrityResults.filter(r => r.success).length;
+        const failCount = integrityResults.filter(r => !r.success).length;
+        addLog('info', `번역 완료: 성공 ${successCount}개, 실패 ${failCount}개 (무결성 모드)`);
+        if (failCount > 0) {
+          addLog('warning', `${failCount}개 청크가 번역에 실패했습니다. 검토 탭에서 확인하세요.`);
+        }
+      } else {
+        // 기본 모드 번역 실행
+        const translationResults = await service.translateText(
+          fullText, 
+          onProgress, 
+          existingResults,
+          onResult
+        );
 
-      if (failCount > 0) {
-        addLog('warning', `${failCount}개 청크가 번역에 실패했습니다. 검토 탭에서 확인하세요.`);
+        setResults(translationResults);
+
+        const combinedText = TranslationService.combineResults(translationResults);
+        setTranslatedText(combinedText);
+
+        const successCount = translationResults.filter(r => r.success).length;
+        const failCount = translationResults.filter(r => !r.success).length;
+        
+        addLog('info', `번역 완료: 성공 ${successCount}개, 실패 ${failCount}개`);
+
+        if (failCount > 0) {
+          addLog('warning', `${failCount}개 청크가 번역에 실패했습니다. 검토 탭에서 확인하세요.`);
+        }
       }
 
     } catch (error) {
@@ -155,6 +173,7 @@ export function useTranslation() {
     addResult,
     setTranslatedText,
     addLog,
+    translationMode,
   ]);
 
   // 번역 중지

@@ -4,6 +4,7 @@
 import { GeminiClient, GeminiContentSafetyException, GenerationConfig } from './GeminiClient';
 import { ChunkService } from './ChunkService';
 import { EpubChunkService } from './EpubChunkService';
+import { TextNodeService, TextNode } from './TextNodeService';
 import { ImageAnnotationService } from './ImageAnnotationService';
 import JSZip from 'jszip';
 import type { 
@@ -69,6 +70,7 @@ function formatGlossaryForPrompt(
 export class TranslationService {
   private geminiClient: GeminiClient;
   private chunkService: ChunkService;
+  private textNodeService: TextNodeService;
   private config: AppConfig;
   private apiKey?: string;
   private glossaryEntries: GlossaryEntry[] = [];
@@ -82,6 +84,7 @@ export class TranslationService {
     this.apiKey = apiKey;
     this.geminiClient = new GeminiClient(apiKey, config.requestsPerMinute);
     this.chunkService = new ChunkService(config.chunkSize);
+    this.textNodeService = new TextNodeService();
   }
 
   /**
@@ -691,6 +694,139 @@ export class TranslationService {
       .sort((a, b) => a.chunkIndex - b.chunkIndex)
       .map(r => r.translatedText)
       .join('');
+  }
+
+  /**
+   * 무결성 보장 텍스트 번역 (줄 단위 노드 기반)
+   * EPUB 구조 번역 로직을 재사용해 누락 없이 번역합니다.
+   */
+  async translateTextWithIntegrityGuarantee(
+    fullText: string,
+    onProgress?: ProgressCallback,
+    onResult?: (result: TranslationResult) => void
+  ): Promise<{ text: string; results: TranslationResult[] }> {
+    this.resetStop();
+
+    const { nodes, originalLines } = this.textNodeService.parse(fullText);
+
+    if (nodes.length === 0) {
+      this.log('info', '번역할 텍스트가 없습니다. (모든 줄이 비어 있음)');
+      return { text: originalLines.join('\n'), results: [] };
+    }
+
+    // 줄 단위 노드 배열을 EPUB 청크 서비스로 분할 (문자 길이 + 노드 수 기준)
+    const epubChunkService = new EpubChunkService(
+      this.config.chunkSize,
+      this.config.epubMaxNodesPerChunk
+    );
+    const chunks = epubChunkService.splitEpubNodesIntoChunks(nodes);
+
+    const progress: TranslationJobProgress = {
+      totalChunks: chunks.length,
+      processedChunks: 0,
+      successfulChunks: 0,
+      failedChunks: 0,
+      currentStatusMessage: '무결성 번역 시작...',
+      etaSeconds: 0,
+    };
+
+    onProgress?.(progress);
+
+    const maxWorkers = this.config.maxWorkers || 1;
+    const processingPromises = new Set<Promise<void>>();
+    const translatedNodes: TextNode[] = [];
+    const chunkResults: TranslationResult[] = [];
+    const startTime = Date.now();
+
+    const processChunk = (chunk: EpubNode[], chunkIndex: number) => async () => {
+      if (this.stopRequested) return;
+
+      progress.currentStatusMessage = `무결성 번역 ${chunkIndex + 1}/${chunks.length} 처리 중...`;
+      progress.currentChunkProcessing = chunkIndex;
+      onProgress?.(progress);
+
+      let success = false;
+      let translatedChunk: EpubNode[] = chunk;
+      let lastError: string | undefined;
+
+      try {
+        translatedChunk = await this.translateEpubChunk(chunk, this.glossaryEntries);
+        success = true;
+      } catch (error) {
+        lastError = (error as Error)?.message;
+        this.log('error', `무결성 번역 청크 ${chunkIndex + 1} 실패: ${error}`);
+      }
+
+      translatedChunk.forEach((n) => translatedNodes.push(n as TextNode));
+
+      progress.processedChunks++;
+      if (success) {
+        progress.successfulChunks++;
+      } else {
+        progress.failedChunks++;
+        progress.lastErrorMessage = lastError;
+      }
+
+      const now = Date.now();
+      const elapsedSeconds = (now - startTime) / 1000;
+      if (progress.processedChunks > 0) {
+        const avgTimePerChunk = elapsedSeconds / progress.processedChunks;
+        const remaining = progress.totalChunks - progress.processedChunks;
+        progress.etaSeconds = Math.ceil(avgTimePerChunk * remaining);
+      }
+
+      onProgress?.(progress);
+
+      if (onResult) {
+        const originalText = chunk.map((n) => n.content ?? '').join('\n');
+        const translatedText = translatedChunk.map((n) => n.content ?? '').join('\n');
+        onResult({
+          chunkIndex,
+          originalText,
+          translatedText,
+          translatedSegments: translatedChunk.map((n) => n.content ?? ''),
+          success,
+          error: lastError,
+        });
+      }
+
+      // 로컬 결과 누적 (최종 반환용)
+      chunkResults.push({
+        chunkIndex,
+        originalText: chunk.map((n) => n.content ?? '').join('\n'),
+        translatedText: translatedChunk.map((n) => n.content ?? '').join('\n'),
+        translatedSegments: translatedChunk.map((n) => n.content ?? ''),
+        success,
+        error: lastError,
+      });
+    };
+
+    for (let i = 0; i < chunks.length; i++) {
+      if (this.stopRequested) break;
+
+      const task = processChunk(chunks[i], i)();
+      processingPromises.add(task);
+      task.then(() => processingPromises.delete(task));
+
+      if (processingPromises.size >= maxWorkers) {
+        await Promise.race(processingPromises);
+      }
+    }
+
+    await Promise.all(processingPromises);
+
+    progress.currentStatusMessage = this.stopRequested ? '무결성 번역 중단됨' : '무결성 번역 완료';
+    progress.currentChunkProcessing = undefined;
+    progress.etaSeconds = 0;
+    onProgress?.(progress);
+
+    // 원본 라인 순으로 정렬 후 복원
+    const reconstructed = this.textNodeService.reconstruct(
+      translatedNodes.sort((a, b) => a.lineIndex - b.lineIndex),
+      originalLines
+    );
+
+    return { text: reconstructed, results: chunkResults.sort((a, b) => a.chunkIndex - b.chunkIndex) };
   }
 
   /**

@@ -32,6 +32,10 @@ interface TranslationState {
   
   // === 출력 ===
   translatedText: string;
+
+  // === 번역 모드 ===
+  translationMode: 'basic' | 'integrity';
+  setTranslationMode: (mode: 'basic' | 'integrity') => void;
   
   // === 파일 관련 액션 ===
   setInputFiles: (files: FileContent[]) => void;
@@ -86,6 +90,7 @@ const initialState = {
   glossaryEntries: [],
   logs: [],
   translatedText: '',
+  translationMode: 'basic' as const,
 };
 
 /**
@@ -194,6 +199,9 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
       results: [...state.results, result],
     };
   }),
+
+  // === 번역 모드 ===
+  setTranslationMode: (mode) => set({ translationMode: mode }),
   
   setResults: (results) => set({ results }),
   

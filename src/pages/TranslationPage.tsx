@@ -328,6 +328,7 @@ function PrefillSettingsEditor() {
  */
 function TranslationSettings({ mode }: { mode: 'text' | 'epub' }) {
   const { config, updateConfig } = useSettingsStore();
+  const { translationMode } = useTranslationStore();
   const [modelOptions, setModelOptions] = useState<{ value: string; label: string }[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
@@ -411,6 +412,19 @@ function TranslationSettings({ mode }: { mode: 'text' | 'epub' }) {
               step={1000}
               helperText="한 번에 번역할 최대 글자 수입니다. 문맥 유지를 위해 적절한 크기를 설정하세요."
             />
+            {translationMode === 'integrity' && (
+              <div className="mt-4">
+                <Input
+                  type="number"
+                  label="청크당 최대 노드 수 (무결성 모드)"
+                  value={config.epubMaxNodesPerChunk}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ epubMaxNodesPerChunk: parseInt(e.target.value) || 30 })}
+                  min={5}
+                  max={100}
+                  helperText="줄 단위 무결성 텍스트 번역 시 한 번에 묶을 최대 라인 개수입니다. 값이 크면 JSON 구조 오류가 발생할 수 있습니다."
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -754,7 +768,7 @@ function ResultPreview({ mode }: { mode: 'text' | 'epub' }) {
  */
 export function TranslationPage() {
   const { config, exportConfig } = useSettingsStore();
-  const { addLog, results, translatedText, addResult } = useTranslationStore();
+  const { addLog, results, translatedText, addResult, translationMode, setTranslationMode } = useTranslationStore();
   const [mode, setMode] = useState<'text' | 'epub'>('text');
   const [epubChapters, setEpubChapters] = useState<any[]>([]);
   
@@ -966,6 +980,48 @@ export function TranslationPage() {
           </label>
         </div>
         
+        {mode === 'text' && (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="flex items-start gap-3 p-3 border rounded-lg cursor-pointer hover:border-blue-400 transition-colors">
+              <input
+                type="radio"
+                name="translation-quality-mode"
+                value="basic"
+                checked={translationMode === 'basic'}
+                onChange={() => setTranslationMode('basic')}
+                className="mt-1 w-4 h-4 accent-blue-600"
+              />
+              <div>
+                <div className="flex items-center gap-2 text-gray-800 font-semibold">
+                  🏃 기본 모드 (자유 번역)
+                </div>
+                <p className="text-sm text-gray-600">
+                  자연스러운 표현 중심. 극대화된 유창성, 약간의 축약 가능성.
+                </p>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-3 p-3 border rounded-lg cursor-pointer hover:border-blue-400 transition-colors">
+              <input
+                type="radio"
+                name="translation-quality-mode"
+                value="integrity"
+                checked={translationMode === 'integrity'}
+                onChange={() => setTranslationMode('integrity')}
+                className="mt-1 w-4 h-4 accent-blue-600"
+              />
+              <div>
+                <div className="flex items-center gap-2 text-gray-800 font-semibold">
+                  🔒 무결성 모드 (줄 단위)
+                </div>
+                <p className="text-sm text-gray-600">
+                  줄 단위 노드로 구조를 보존하고 누락을 차단합니다. 법률/기술 문서에 권장.
+                </p>
+              </div>
+            </label>
+          </div>
+        )}
+
         {mode === 'epub' && (
           <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
             💡 <strong>EPUB 모드</strong>에서는 전자책 파일을 업로드하면 자동으로 파싱되고, 번역 후 새로운 EPUB 파일로 다운로드됩니다.
