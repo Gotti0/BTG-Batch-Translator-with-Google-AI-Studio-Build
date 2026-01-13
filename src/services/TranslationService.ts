@@ -11,7 +11,8 @@ import type {
   GlossaryEntry, 
   TranslationResult, 
   TranslationJobProgress, 
-  LogEntry 
+  LogEntry,
+  TranslationContext
 } from '../types/dtos';
 import type { AppConfig, PrefillHistoryItem } from '../types/config';
 import type { EpubNode, EpubChapter } from '../types/epub';
@@ -73,7 +74,6 @@ export class TranslationService {
   private textNodeService: TextNodeService;
   private config: AppConfig;
   private apiKey?: string;
-  private glossaryEntries: GlossaryEntry[] = [];
   private stopRequested: boolean = false;
   private onLog?: LogCallback;
   
@@ -101,14 +101,6 @@ export class TranslationService {
     const entry: LogEntry = { level, message, timestamp: new Date() };
     console.log(`[${level.toUpperCase()}] ${message}`);
     this.onLog?.(entry);
-  }
-
-  /**
-   * 용어집 설정
-   */
-  setGlossaryEntries(entries: GlossaryEntry[]): void {
-    this.glossaryEntries = entries;
-    this.log('info', `용어집 ${entries.length}개 항목 로드됨`);
   }
 
   /**
@@ -149,14 +141,22 @@ export class TranslationService {
    * @param chunkIndex 청크 인덱스 (로깅용)
    * @returns { prompt: string, glossaryContext: string } 구성된 프롬프트와 용어집 컨텍스트
    */
-  private preparePromptAndContext(chunkText: string, chunkIndex: number): { prompt: string, glossaryContext: string } {
+  /**
+   * 프롬프트 및 컨텍스트 준비
+   * [Stateless] 인스턴스 변수가 아닌 명시적으로 전달된 glossaryEntries를 사용합니다.
+   */
+  private preparePromptAndContext(
+    chunkText: string, 
+    chunkIndex: number, 
+    glossaryEntries: GlossaryEntry[]
+  ): { prompt: string, glossaryContext: string } {
     let prompt = this.config.prompts;
     let glossaryContext = '용어집 컨텍스트 없음';
 
     // 용어집 컨텍스트 생성
     if (this.config.enableDynamicGlossaryInjection) {
       glossaryContext = formatGlossaryForPrompt(
-        this.glossaryEntries,
+        glossaryEntries,
         chunkText,
         this.config.maxGlossaryEntriesPerChunkInjection,
         this.config.maxGlossaryCharsPerChunkInjection
@@ -245,6 +245,7 @@ export class TranslationService {
   async translateChunk(
     chunkText: string, 
     chunkIndex: number, 
+    context: TranslationContext,
     enableSafetyRetry: boolean = true
   ): Promise<TranslationResult> {
     if (!chunkText.trim()) {
@@ -256,8 +257,8 @@ export class TranslationService {
       };
     }
 
-    // [수정] 프롬프트 및 컨텍스트 준비 (분리된 로직 사용)
-    const { prompt, glossaryContext } = this.preparePromptAndContext(chunkText, chunkIndex);
+    // [Stateless] 전달받은 context의 용어집을 사용합니다.
+    const { prompt, glossaryContext } = this.preparePromptAndContext(chunkText, chunkIndex, context.glossaryEntries);
     
     const textPreview = chunkText.slice(0, 100).replace(/\n/g, ' ');
     this.log('info', `청크 ${chunkIndex + 1} 번역 시작 (모델: ${this.config.modelName}): "${textPreview}..."`);
@@ -379,7 +380,7 @@ export class TranslationService {
 
       if (enableSafetyRetry && this.config.useContentSafetyRetry && (isContentSafety || isEmptyResponse)) {
         this.log('warning', isContentSafety ? `콘텐츠 안전 오류 감지. 분할 재시도 시작...` : `빈 응답 오류 감지. 분할 재시도 시작...`);
-        return this.retryWithSmallerChunks(chunkText, chunkIndex);
+        return this.retryWithSmallerChunks(chunkText, chunkIndex, context, 1);
       }
 
       return {
@@ -403,6 +404,7 @@ export class TranslationService {
   private async retryWithSmallerChunks(
     chunkText: string,
     originalIndex: number,
+    context: TranslationContext,
     currentAttempt: number = 1
   ): Promise<TranslationResult> {
     // 1. 최대 시도 횟수 초과 체크
@@ -489,7 +491,7 @@ export class TranslationService {
         // 분할된 조각으로 번역 시도
         // 여기서 호출할 때는 enableSafetyRetry를 false로 설정하여
         // translateChunk가 에러를 가로채지 않고 그대로 던지거나 실패를 반환하게 함
-        const result = await this.translateChunk(subChunks[i], originalIndex, false);
+        const result = await this.translateChunk(subChunks[i], originalIndex, context, false);
         
         if (this.stopRequested) {
             translatedParts.push('[중단됨]');
@@ -504,6 +506,7 @@ export class TranslationService {
           const retryResult = await this.retryWithSmallerChunks(
             subChunks[i],
             originalIndex,
+            context,
             currentAttempt + 1
           );
           translatedParts.push(retryResult.translatedText);
@@ -514,6 +517,7 @@ export class TranslationService {
         const retryResult = await this.retryWithSmallerChunks(
           subChunks[i],
           originalIndex,
+          context,
           currentAttempt + 1
         );
         translatedParts.push(retryResult.translatedText);
@@ -538,6 +542,7 @@ export class TranslationService {
    */
   async translateText(
     fullText: string,
+    context: TranslationContext,
     onProgress?: ProgressCallback,
     existingResults?: TranslationResult[],
     onResult?: (result: TranslationResult) => void
@@ -629,7 +634,7 @@ export class TranslationService {
         onProgress?.(progress);
 
         try {
-          const result = await this.translateChunk(chunks[i], i);
+          const result = await this.translateChunk(chunks[i], i, context, true);
           
           if (this.stopRequested) return;
 
@@ -702,6 +707,7 @@ export class TranslationService {
    */
   async translateTextWithIntegrityGuarantee(
     fullText: string,
+    context: TranslationContext,
     onProgress?: ProgressCallback,
     onResult?: (result: TranslationResult) => void
   ): Promise<{ text: string; results: TranslationResult[] }> {
@@ -750,7 +756,7 @@ export class TranslationService {
       let lastError: string | undefined;
 
       try {
-        translatedChunk = await this.translateEpubChunk(chunk, this.glossaryEntries);
+        translatedChunk = await this.translateEpubChunk(chunk, context, 1, chunkIndex);
         success = true;
       } catch (error) {
         lastError = (error as Error)?.message;
@@ -838,6 +844,7 @@ export class TranslationService {
    */
   async retryFailedChunks(
     results: TranslationResult[],
+    context: TranslationContext,
     onProgress?: ProgressCallback,
     onResult?: (result: TranslationResult) => void
   ): Promise<TranslationResult[]> {
@@ -879,7 +886,9 @@ export class TranslationService {
 
         const newResult = await this.translateChunk(
           failedResult.originalText,
-          failedResult.chunkIndex
+          failedResult.chunkIndex,
+          context,
+          true
         );
 
         if (this.stopRequested) return;
@@ -942,6 +951,7 @@ export class TranslationService {
   async retryFailedIntegrityChunks(
     results: TranslationResult[],
     fullText: string,
+    context: TranslationContext,
     onProgress?: ProgressCallback,
     onResult?: (result: TranslationResult) => void
   ): Promise<{ text: string; results: TranslationResult[] }> {
@@ -1028,7 +1038,7 @@ export class TranslationService {
         let success = false;
         
         try {
-          newTranslatedNodes = await this.translateEpubChunk(nodesToRetry, this.glossaryEntries);
+          newTranslatedNodes = await this.translateEpubChunk(nodesToRetry, context, 1, chunkIndex);
           success = true;
         } catch (error) {
           if (this.stopRequested) {
@@ -1038,7 +1048,7 @@ export class TranslationService {
             newTranslatedNodes = await this.retryEpubNodesWithSmallerBatches(
               nodesToRetry,
               chunkIndex,
-              this.glossaryEntries,
+              context,
               1
             );
             success = true;
@@ -1136,6 +1146,7 @@ export class TranslationService {
   async retryFailedEpubChunks(
     results: TranslationResult[],
     allNodes: EpubNode[],
+    context: TranslationContext,
     onProgress?: ProgressCallback,
     onResult?: (result: TranslationResult) => void
   ): Promise<TranslationResult[]> {
@@ -1195,7 +1206,7 @@ export class TranslationService {
         
         try {
           // `translateEpubNodes`의 핵심 로직과 동일하게 재시도
-          newTranslatedNodes = await this.translateEpubChunk(nodesToRetry, this.glossaryEntries);
+          newTranslatedNodes = await this.translateEpubChunk(nodesToRetry, context, 1, chunkIndex);
           success = true;
         } catch (error) {
           if (this.stopRequested) {
@@ -1206,7 +1217,7 @@ export class TranslationService {
             newTranslatedNodes = await this.retryEpubNodesWithSmallerBatches(
               nodesToRetry,
               chunkIndex,
-              this.glossaryEntries,
+              context,
               1
             );
             // 분할 정복은 일부라도 성공시키려 하므로, success로 간주할 수 있음
@@ -1284,7 +1295,7 @@ export class TranslationService {
    */
   async translateEpubNodes(
     nodes: EpubNode[],
-    glossaryEntries?: GlossaryEntry[],
+    context: TranslationContext,
     onProgress?: ProgressCallback,
     onResult?: (result: TranslationResult) => void,
     zip?: JSZip,
@@ -1388,10 +1399,12 @@ export class TranslationService {
           if (this.stopRequested) return;
 
           try {
-            const translated = await this.translateEpubChunk(
-              chunks[i],
-              glossaryEntries
-            );
+          const translated = await this.translateEpubChunk(
+            chunks[i],
+            context,
+            1,
+            i
+          );
 
             // [DEBUG] 1. translateEpubChunk의 직접적인 반환 값 확인
             console.log(`[DEBUG 1/3] 청크 ${i+1} Raw Result from translateEpubChunk`, { 
@@ -1439,7 +1452,7 @@ export class TranslationService {
             const retriedNodes = await this.retryEpubNodesWithSmallerBatches(
               chunks[i],
               i,
-              glossaryEntries,
+              context,
               1
             );
             chunkResults.set(i, retriedNodes);
@@ -1535,8 +1548,9 @@ export class TranslationService {
    */
   private async translateEpubChunk(
     nodes: EpubNode[],
-    glossaryEntries?: GlossaryEntry[],
-    currentAttempt: number = 1
+    context: TranslationContext,
+    currentAttempt: number = 1,
+    chunkIndex: number = 0
   ): Promise<EpubNode[]> {
     const textNodes = nodes.filter((n) => n.type === 'text');
 
@@ -1556,7 +1570,9 @@ export class TranslationService {
     }));
     
     const jsonString = JSON.stringify(requestData, null, 2);
-    const { prompt, glossaryContext } = this.preparePromptAndContext(jsonString, 0);
+
+    // [Stateless] 전달받은 context의 용어집을 사용합니다.
+    const { prompt, glossaryContext } = this.preparePromptAndContext(jsonString, chunkIndex, context.glossaryEntries);
 
     const config: GenerationConfig = {
       temperature: this.config.temperature,
@@ -1633,7 +1649,7 @@ export class TranslationService {
         // 재귀 호출
         retriedNodes = await this.translateEpubChunk(
           missingNodes, 
-          glossaryEntries,
+          context,
           currentAttempt + 1 
         );
 
@@ -1703,14 +1719,14 @@ export class TranslationService {
    * 
    * @param nodes 번역할 EpubNode 배열
    * @param originalChunkIndex 로깅용 청크 인덱스
-   * @param glossaryEntries 용어집 (선택사항)
+   * @param context 번역 컨텍스트
    * @param currentAttempt 현재 시도 깊이
    * @returns 번역된 EpubNode 배열 (실패한 노드는 원문 유지)
    */
   private async retryEpubNodesWithSmallerBatches(
     nodes: EpubNode[],
     originalChunkIndex: number,
-    glossaryEntries?: GlossaryEntry[],
+    context: TranslationContext,
     currentAttempt: number = 1
   ): Promise<EpubNode[]> {
     // 0. 중단 요청 확인
@@ -1750,7 +1766,7 @@ export class TranslationService {
       if (this.stopRequested) break;
 
       try {
-        const translatedBatch = await this.translateEpubChunk(batch, glossaryEntries);
+        const translatedBatch = await this.translateEpubChunk(batch, context);
         translatedBatch.forEach(node => resultsMap.set(node.id, node));
       } catch (error) {
         if (this.stopRequested) break;
@@ -1761,7 +1777,7 @@ export class TranslationService {
         const retriedResults = await this.retryEpubNodesWithSmallerBatches(
           batch,
           originalChunkIndex,
-          glossaryEntries,
+          context,
           currentAttempt + 1
         );
         retriedResults.forEach(node => resultsMap.set(node.id, node));

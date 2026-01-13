@@ -10,7 +10,7 @@ import { TranslationService } from '../services/TranslationService';
 import { ChunkService } from '../services/ChunkService';
 import { EpubService } from '../services/EpubService';
 import { EpubChunkService } from '../services/EpubChunkService';
-import type { TranslationJobProgress, TranslationResult, TranslationSnapshot, FileContent } from '../types/dtos';
+import type { TranslationJobProgress, TranslationResult, TranslationSnapshot, FileContent, TranslationContext } from '../types/dtos';
 import type { AppConfig } from '../types/config';
 
 /**
@@ -59,11 +59,8 @@ export function useTranslation() {
       serviceRef.current.updateConfig(config);
     }
 
-    // 용어집 설정
-    serviceRef.current.setGlossaryEntries(glossaryEntries);
-
     return serviceRef.current;
-  }, [config, glossaryEntries, addLog]);
+  }, [config, addLog]);
 
   // 번역 시작
   const executeTranslation = useCallback(async () => {
@@ -103,11 +100,14 @@ export function useTranslation() {
         addResult(result);
       };
 
+      const context: TranslationContext = { glossaryEntries };
+
       if (translationMode === 'integrity') {
         addLog('info', '🔒 무결성 보장 모드로 번역을 시작합니다. (줄 단위 노드)');
 
         const { text, results: integrityResults } = await service.translateTextWithIntegrityGuarantee(
           fullText,
+          context,
           onProgress,
           onResult
         );
@@ -125,6 +125,7 @@ export function useTranslation() {
         // 기본 모드 번역 실행
         const translationResults = await service.translateText(
           fullText, 
+          context,
           onProgress, 
           existingResults,
           onResult
@@ -207,6 +208,7 @@ export function useTranslation() {
     const onResult = (result: TranslationResult) => updateResult(result.chunkIndex, result);
 
     const isEpubMode = inputFiles[0]?.isEpub;
+    const context: TranslationContext = { glossaryEntries };
 
     try {
       let retriedResults;
@@ -222,6 +224,7 @@ export function useTranslation() {
         retriedResults = await service.retryFailedEpubChunks(
           results,
           allNodes,
+          context,
           onProgress,
           onResult
         );
@@ -233,6 +236,7 @@ export function useTranslation() {
         const { text, results: integrityResults } = await service.retryFailedIntegrityChunks(
           results,
           fullText,
+          context,
           onProgress,
           onResult
         );
@@ -244,6 +248,7 @@ export function useTranslation() {
         addLog('info', '텍스트 모드로 재번역을 실행합니다.');
         retriedResults = await service.retryFailedChunks(
           results,
+          context,
           onProgress,
           onResult
         );
@@ -299,11 +304,13 @@ export function useTranslation() {
 
     try {
       const service = getOrCreateService();
+      const context: TranslationContext = { glossaryEntries };
       
       // 3. 단일 청크 번역 요청 (안전 모드 재시도 활성화)
       const newResult = await service.translateChunk(
         targetResult.originalText,
         chunkIndex,
+        context,
         true 
       );
 

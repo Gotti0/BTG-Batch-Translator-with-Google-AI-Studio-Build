@@ -53,6 +53,13 @@ export interface GlossaryEntry {
 }
 
 /**
+ * 번역 실행 시 필요한 문맥 정보 (Stateless 설계를 위함)
+ */
+export interface TranslationContext {
+  glossaryEntries: GlossaryEntry[];
+}
+
+/**
  * 용어집 추출 작업 진행 상황
  */
 export interface GlossaryExtractionProgress {

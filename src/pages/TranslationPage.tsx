@@ -26,7 +26,8 @@ import {
   IconButton
 } from '../components';
 import ThinkingSettings from '../components/common/ThinkingSettings';
-import type { FileContent } from '../types/dtos';
+import type { FileContent, TranslationContext } from '../types/dtos';
+import { useGlossaryStore } from '../stores/glossaryStore';
 
 /**
  * 파일 업로드 영역 컴포넌트
@@ -768,6 +769,7 @@ function ResultPreview({ mode }: { mode: 'text' | 'epub' }) {
  */
 export function TranslationPage() {
   const { config, exportConfig } = useSettingsStore();
+  const { entries: glossaryEntries } = useGlossaryStore();
   const { addLog, results, translatedText, addResult, translationMode, setTranslationMode } = useTranslationStore();
   const [mode, setMode] = useState<'text' | 'epub'>('text');
   const [epubChapters, setEpubChapters] = useState<any[]>([]);
@@ -824,9 +826,10 @@ export function TranslationPage() {
 
           addLog('info', `📖 [단계 2/4] 텍스트 번역을 시작합니다. (청크 크기: ${config.chunkSize})`);
 
+          const context: TranslationContext = { glossaryEntries };
           const translatedNodes = await translationService.translateEpubNodes(
             epubFile.epubChapters.flatMap((ch: any) => ch.nodes),
-            [], // 용어집이 있다면 여기에 전달
+            context,
             (progress: any) => {
               // 진행률 로그는 너무 빈번할 수 있으므로 필요 시 주석 처리하거나 빈도 조절
               // addLog('debug', `진행률: ${progress.processedChunks}/${progress.totalChunks}`);
