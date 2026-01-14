@@ -173,19 +173,14 @@ export class EpubService {
       head = doc.head.innerHTML;
     }
 
-    // 태그 분류 정의
-    const imageTags = ['img', 'svg'];
-    // 말단 블록 태그: 더 이상 분해하지 않고 텍스트를 추출할 단위
-    // [수정] p, h1-h6 등은 내부에 img를 포함할 수 있으므로, 더 이상 말단으로 취급하지 않음.
-    const leafBlockTags = ['hr'];
-    // 구조 보존 태그: 내부 요소를 순회하되, 자신의 태그도 보존해야 하는 컨테이너 (네비게이션 등)
-    const structuralTags = ['nav', 'ol', 'ul', 'li'];
-    // 컨테이너 태그: 내부 구조에 따라 재귀 여부를 결정할 태그들
-    const potentialContainerTags = [
-      'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre', // img를 포함할 수 있으므로 컨테이너로 이동
-      'div', 'section', 'article', 'main', 'aside', 'header', 'footer', 
-      'blockquote', 'dl', 'dt', 'dd', 'table', 'tr', 'td', 'th', 'body', 'form'
-    ];
+    // [개선] 태그 분류를 하드코딩하지 않고 기능적 역할에 따라 최소화된 기준으로 정의합니다.
+    const imageTags = ['img', 'svg', 'image'];
+    const atomicSelfClosingTags = ['hr', 'br'];
+    // 반드시 구조(태그)가 유지되어야 하는 컨테이너
+    const structuralTags = ['nav', 'ol', 'ul', 'li', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'dl', 'dt', 'dd', 'blockquote'];
+    
+    // 내부를 분해해서 탐색해야 할지 결정하는 '복합 콘텐츠' 셀렉터
+    const complexContentSelector = [...imageTags, ...atomicSelfClosingTags, ...structuralTags, 'p', 'div', 'section', 'article', 'aside', 'header', 'footer', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].join(',');
 
     /**
      * 재귀 순회 함수
@@ -196,33 +191,15 @@ export class EpubService {
       children.forEach((el) => {
         const tagName = el.tagName.toLowerCase();
 
-        // 0. 구조 보존 컨테이너 처리 (nav, ol, ul, li 등)
-        // 자식 요소가 있는 경우에만 구조를 보존하고 순회 (자식이 없으면 말단으로 처리하여 텍스트 추출)
-        if (structuralTags.includes(tagName) && el.children.length > 0) {
-           // Opening Tag (속성 포함)
-           const clone = el.cloneNode(false) as Element;
-           const html = clone.outerHTML;
-           // <tag ...></tag> 형태에서 </tag> 제거하여 Opening Tag만 추출
-           const openingHtml = html.substring(0, html.lastIndexOf('<'));
-           
-           nodes.push({ id: `${fileName}_${nodeIndex++}`, type: 'ignored', tag: tagName, html: openingHtml });
-           
-           traverse(el);
-           
-           // Closing Tag
-           nodes.push({ id: `${fileName}_${nodeIndex++}`, type: 'ignored', tag: tagName, html: `</${tagName}>` });
-           return;
-        }
-
-        // 1. 이미지 처리
+        // 1. 이미지 처리 (최우선)
         if (imageTags.includes(tagName)) {
           const deterministicId = `${fileName}_${nodeIndex++}`;
           let imagePath: string | undefined;
 
           if (tagName === 'img') {
             imagePath = el.getAttribute('src') || undefined;
-          } else if (tagName === 'svg') {
-            const innerImg = el.querySelector('image');
+          } else {
+            const innerImg = tagName === 'svg' ? el.querySelector('image') : el;
             if (innerImg) {
               imagePath = innerImg.getAttribute('href') || innerImg.getAttribute('xlink:href') || undefined;
             }
@@ -242,66 +219,41 @@ export class EpubService {
           return;
         }
 
-        // 2. 말단 블록 처리 (p, h1, etc.)
-        if (leafBlockTags.includes(tagName)) {
-          const deterministicId = `${fileName}_${nodeIndex++}`;
-          if (tagName === 'hr') {
-            nodes.push({ id: deterministicId, type: 'ignored', tag: tagName, html: el.outerHTML });
-          } else {
-            const content = this.extractPureText(el);
-            if (content) {
-              nodes.push({
-                id: deterministicId,
-                type: 'text',
-                tag: tagName,
-                content,
-                attributes: this.getAttributes(el),
-              });
-            }
-          }
+        // 2. 기타 원자적 태그 (hr 등)
+        if (atomicSelfClosingTags.includes(tagName)) {
+          nodes.push({ id: `${fileName}_${nodeIndex++}`, type: 'ignored', tag: tagName, html: el.outerHTML });
           return;
         }
 
-        // 3. 컨테이너 처리 (div, section, etc.)
-        if (potentialContainerTags.includes(tagName)) {
-          // [수정] 자식(children)만 검사하면 <a><img></a> 같은 중첩 구조를 놓침
-          // 따라서 querySelector로 모든 후손(descendant)을 검사하도록 변경
-          const blockSelector = [...leafBlockTags, ...potentialContainerTags, ...imageTags, ...structuralTags].join(',');
-          const hasBlockDescendants = el.querySelector(blockSelector) !== null;
+        // 3. 동적 컨테이너 판별 로직
+        // - 구조적 태그이거나
+        // - 내부에 '복합 요소(이미지, 블록 등)'를 포함하고 있는 경우
+        // -> 이 경우 태그를 보존하고 내부로 진입합니다.
+        const isStructural = structuralTags.includes(tagName);
+        const hasComplexContent = el.querySelector(complexContentSelector) !== null;
 
-          if (hasBlockDescendants) {
-            // 블록 자손이 있으면 컨테이너를 해체하고 내부로 진입
-            traverse(el);
-          } else {
-            // 블록 자손이 없으면(텍스트나 인라인만 있음) 하나의 텍스트 노드로 취급
-            const content = this.extractPureText(el);
-            if (content) {
-              const deterministicId = `${fileName}_${nodeIndex++}`;
-              nodes.push({
-                id: deterministicId,
-                type: 'text',
-                tag: tagName,
-                content,
-                attributes: this.getAttributes(el),
-              });
-            }
+        if (isStructural || hasComplexContent) {
+           const clone = el.cloneNode(false) as Element;
+           const html = clone.outerHTML;
+           const openingHtml = html.substring(0, html.lastIndexOf('<') || html.length);
+           
+           nodes.push({ id: `${fileName}_${nodeIndex++}`, type: 'ignored', tag: tagName, html: openingHtml });
+           
+           traverse(el);
+           
+           nodes.push({ id: `${fileName}_${nodeIndex++}`, type: 'ignored', tag: tagName, html: `</${tagName}>` });
+        } else {
+          // 4. 더 이상 쪼갤 필요가 없는 말단 텍스트 블록 (p, span, div 등 모든 태그 해당)
+          const content = this.extractPureText(el);
+          if (content) {
+            nodes.push({
+              id: `${fileName}_${nodeIndex++}`,
+              type: 'text',
+              tag: tagName,
+              content,
+              attributes: this.getAttributes(el),
+            });
           }
-          return;
-        }
-
-        // 4. 인라인 요소 (span, a, etc.)
-        // 컨테이너 재귀 진입으로 인해 노출된 인라인 요소들은 독립된 텍스트 노드로 처리
-        // (예: <div><p>A</p><span>B</span></div> -> P와 Span이 형제 노드처럼 처리됨)
-        const content = this.extractPureText(el);
-        if (content) {
-          const deterministicId = `${fileName}_${nodeIndex++}`;
-          nodes.push({
-            id: deterministicId,
-            type: 'text',
-            tag: tagName,
-            content,
-            attributes: this.getAttributes(el),
-          });
         }
       });
     };
@@ -406,8 +358,8 @@ export class EpubService {
     const attrs: Record<string, string> = {};
 
     Array.from(el.attributes).forEach((attr) => {
-      // [수정] href 속성도 추출 대상에 포함 (<a> 태그 링크 보존)
-      if (['class', 'id', 'style', 'href', 'data-*'].some((a) => attr.name.includes(a))) {
+      // [수정] href, alt, title 속성도 추출 대상에 포함
+      if (['class', 'id', 'style', 'href', 'alt', 'title', 'data-*'].some((a) => attr.name.includes(a))) {
         attrs[attr.name] = attr.value;
       }
     });
