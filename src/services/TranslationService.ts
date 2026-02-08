@@ -7,10 +7,10 @@ import { EpubChunkService } from './EpubChunkService';
 import { TextNodeService, TextNode } from './TextNodeService';
 import { ImageAnnotationService } from './ImageAnnotationService';
 import JSZip from 'jszip';
-import type { 
-  GlossaryEntry, 
-  TranslationResult, 
-  TranslationJobProgress, 
+import type {
+  GlossaryEntry,
+  TranslationResult,
+  TranslationJobProgress,
   LogEntry,
   TranslationContext
 } from '../types/dtos';
@@ -54,7 +54,7 @@ function formatGlossaryForPrompt(
     if (selected.length >= maxEntries) break;
 
     const entryStr = `- ${entry.keyword} → ${entry.translatedKeyword} (${entry.targetLanguage})`;
-    
+
     // 최대 글자 수 초과 시 중단 (단, 최소 1개는 포함)
     if (currentChars + entryStr.length > maxChars && selected.length > 0) break;
 
@@ -76,7 +76,7 @@ export class TranslationService {
   private apiKey?: string;
   private stopRequested: boolean = false;
   private onLog?: LogCallback;
-  
+
   // 병렬 요청 취소를 위한 컨트롤러 집합
   private cancelControllers: Set<() => void> = new Set();
   constructor(config: AppConfig, apiKey?: string) {
@@ -108,7 +108,7 @@ export class TranslationService {
    */
   updateConfig(config: Partial<AppConfig>): void {
     this.config = { ...this.config, ...config };
-    
+
     if (config.requestsPerMinute !== undefined) {
       this.geminiClient.setRequestsPerMinute(config.requestsPerMinute);
     }
@@ -120,7 +120,7 @@ export class TranslationService {
   requestStop(): void {
     this.stopRequested = true;
     this.log('warning', '번역 중단이 요청되었습니다.');
-    
+
     // 현재 진행 중인 모든 요청 취소
     this.cancelControllers.forEach(cancel => cancel());
     this.cancelControllers.clear();
@@ -146,8 +146,8 @@ export class TranslationService {
    * [Stateless] 인스턴스 변수가 아닌 명시적으로 전달된 glossaryEntries를 사용합니다.
    */
   private preparePromptAndContext(
-    chunkText: string, 
-    chunkIndex: number, 
+    chunkText: string,
+    chunkIndex: number,
     glossaryEntries: GlossaryEntry[]
   ): { prompt: string, glossaryContext: string } {
     let prompt = this.config.prompts;
@@ -167,7 +167,7 @@ export class TranslationService {
         const entries = glossaryContext.split('\n');
         const entryCount = entries.length;
         this.log('info', `청크 ${chunkIndex + 1}: 동적 용어집 ${entryCount}개 항목이 준비되었습니다.`);
-        
+
         // 상위 3개 항목 로깅
         const topItems = entries.slice(0, 3);
         topItems.forEach((item) => {
@@ -184,7 +184,7 @@ export class TranslationService {
     if (prompt.includes('{{glossary_context}}')) {
       prompt = prompt.replace('{{glossary_context}}', glossaryContext);
     }
-    
+
     prompt = prompt.replace('{{slot}}', chunkText);
 
     return { prompt, glossaryContext };
@@ -234,7 +234,7 @@ export class TranslationService {
     }
     // 마지막 항목 저장
     merged.push(current);
-    
+
     return merged;
   }
 
@@ -243,8 +243,8 @@ export class TranslationService {
    * @param enableSafetyRetry - 실패 시 콘텐츠 안전 분할 재시도를 수행할지 여부 (재귀 호출 시 false로 설정)
    */
   async translateChunk(
-    chunkText: string, 
-    chunkIndex: number, 
+    chunkText: string,
+    chunkIndex: number,
     context: TranslationContext,
     enableSafetyRetry: boolean = true
   ): Promise<TranslationResult> {
@@ -259,7 +259,7 @@ export class TranslationService {
 
     // [Stateless] 전달받은 context의 용어집을 사용합니다.
     const { prompt, glossaryContext } = this.preparePromptAndContext(chunkText, chunkIndex, context.glossaryEntries);
-    
+
     const textPreview = chunkText.slice(0, 100).replace(/\n/g, ' ');
     this.log('info', `청크 ${chunkIndex + 1} 번역 시작 (모델: ${this.config.modelName}): "${textPreview}..."`);
 
@@ -292,7 +292,7 @@ export class TranslationService {
           role: item.role,
           content: item.parts.join('\n'),
         }));
-        
+
         // [수정] API 제약 준수를 위한 교대 역할 병합 실행
         const chatHistory = this.mergeConsecutiveRoles(rawHistory);
 
@@ -324,7 +324,7 @@ export class TranslationService {
 
       // API 호출과 취소 요청 경합
       const rawTranslatedText = await Promise.race([apiPromise, cancelPromise]);
-      
+
       // [추가] 후처리 적용 (HTML 태그 제거 등)
       const translatedText = this.postProcess(rawTranslatedText);
 
@@ -332,7 +332,7 @@ export class TranslationService {
       if (!translatedText && chunkText.trim()) {
         throw new Error('API 응답이 비어있습니다 (후처리 후 0자).');
       }
-      
+
       this.log('info', `청크 ${chunkIndex + 1} 번역 완료 (${translatedText.length}자)`);
 
       return {
@@ -348,7 +348,7 @@ export class TranslationService {
       if (GeminiClient.isRateLimitError(error as Error)) {
         this.log('error', `API 할당량 초과(429) 감지. 번역 작업을 중단합니다.`);
         this.requestStop(); // 전체 작업 중단 요청
-        
+
         return {
           chunkIndex,
           originalText: chunkText,
@@ -463,17 +463,17 @@ export class TranslationService {
       const halfLength = Math.ceil(chunkText.length / 2);
       subChunks = [chunkText.slice(0, halfLength), chunkText.slice(halfLength)];
     }
-    
+
     // 여전히 분할되지 않았다면 포기
     if (subChunks.length <= 1) {
-        this.log('error', "청크 분할 실패. 번역 포기.");
-        return {
-            chunkIndex: originalIndex,
-            originalText: chunkText,
-            translatedText: `[분할 불가능한 오류 발생 콘텐츠: ${chunkText}...]`,
-            success: false,
-            error: '분할 불가능',
-        };
+      this.log('error', "청크 분할 실패. 번역 포기.");
+      return {
+        chunkIndex: originalIndex,
+        originalText: chunkText,
+        translatedText: `[분할 불가능한 오류 발생 콘텐츠: ${chunkText}...]`,
+        success: false,
+        error: '분할 불가능',
+      };
     }
 
     this.log('info', `🔄 분할 완료: ${subChunks.length}개 서브 청크 생성`);
@@ -492,17 +492,17 @@ export class TranslationService {
         // 여기서 호출할 때는 enableSafetyRetry를 false로 설정하여
         // translateChunk가 에러를 가로채지 않고 그대로 던지거나 실패를 반환하게 함
         const result = await this.translateChunk(subChunks[i], originalIndex, context, false);
-        
+
         if (this.stopRequested) {
-            translatedParts.push('[중단됨]');
-            break;
+          translatedParts.push('[중단됨]');
+          break;
         }
 
         if (result.success) {
           translatedParts.push(result.translatedText);
         } else {
           // 실패 시 해당 조각에 대해 재귀 호출 (다음 시도 횟수 증가)
-          this.log('info', `서브 청크 ${i+1}/${subChunks.length} 실패. 재귀 분할 진입.`);
+          this.log('info', `서브 청크 ${i + 1}/${subChunks.length} 실패. 재귀 분할 진입.`);
           const retryResult = await this.retryWithSmallerChunks(
             subChunks[i],
             originalIndex,
@@ -581,32 +581,31 @@ export class TranslationService {
 
     // 초기 상태 보고
     onProgress?.(progress);
-    
+
     // 현재 처리 중인 Promise 집합 (병렬 처리 제어용)
     const processingPromises = new Set<Promise<void>>();
 
-    for (let i = 0; i < chunks.length; i++) {
-      // 중단 체크
-      if (this.stopRequested) {
-        this.log('warning', '번역이 사용자에 의해 중단되었습니다.');
-        break;
-      }
+    // [추가] 중단 로그 중복 방지 플래그
+    let stopLogged = false;
 
-      // 1. 이미 번역된 청크 처리 (기존 결과 활용)
+    for (let i = 0; i < chunks.length; i++) {
+      // 1. [최우선] 이미 번역된 청크 처리 (기존 결과 활용)
+      // 중단 요청이 있더라도 기존 결과는 모두 살려야 하므로 가장 먼저 체크합니다.
       if (existingMap.has(i)) {
         const existingResult = existingMap.get(i)!;
-        
+
         // 원문 텍스트가 변경되었는지 확인 (옵션)
+        // 원문이 같다면 기존 결과를 그대로 사용
         if (existingResult.originalText.length === chunks[i].length) {
           results.push(existingResult);
-          
+
           // [중요] 기존 결과도 실시간 반영을 위해 콜백 호출
           onResult?.(existingResult);
 
           // 진행률 업데이트
           progress.processedChunks++;
           progress.successfulChunks++;
-          
+
           // 기존 항목 스킵 시 ETA 계산 (빠르게 넘어가므로 0으로 수렴할 수 있지만 계산은 수행)
           const now = Date.now();
           const elapsedSeconds = (now - startTime) / 1000;
@@ -615,14 +614,25 @@ export class TranslationService {
             const remainingChunks = progress.totalChunks - progress.processedChunks;
             progress.etaSeconds = Math.ceil(avgTimePerChunk * remainingChunks);
           }
-          
+
           onProgress?.(progress);
 
           this.log('debug', `청크 ${i + 1} 스킵 (이미 완료됨)`);
           continue; // Worker를 점유하지 않고 넘어감
         } else {
           this.log('warning', `청크 ${i + 1}의 기존 결과가 있으나 원문 길이가 일치하지 않아 재번역합니다.`);
+          // 원문이 다르면 아래 로직(재번역)으로 진행
         }
+      }
+
+      // 2. 중단 체크 (Soft Stop)
+      // break를 하면 뒤에 있는 existingResults를 못 찾으므로 continue로 처리
+      if (this.stopRequested) {
+        if (!stopLogged) {
+          this.log('warning', '번역이 사용자에 의해 중단되었습니다.');
+          stopLogged = true;
+        }
+        continue; // 다음 청크로 이동 (API 호출 스킵)
       }
 
       // 2. 새로운 번역 실행 (비동기 Task 생성)
@@ -635,7 +645,7 @@ export class TranslationService {
 
         try {
           const result = await this.translateChunk(chunks[i], i, context, true);
-          
+
           if (this.stopRequested) return;
 
           results.push(result);
@@ -649,7 +659,7 @@ export class TranslationService {
             progress.failedChunks++;
             progress.lastErrorMessage = result.error;
           }
-          
+
           // [추가] ETA 계산
           const now = Date.now();
           const elapsedSeconds = (now - startTime) / 1000;
@@ -661,8 +671,8 @@ export class TranslationService {
 
           onProgress?.(progress);
         } catch (err) {
-            // translateChunk 내부에서 대부분 처리되지만 안전망
-            this.log('error', `Task ${i+1} unhandled error: ${err}`);
+          // translateChunk 내부에서 대부분 처리되지만 안전망
+          this.log('error', `Task ${i + 1} unhandled error: ${err}`);
         }
       })();
 
@@ -849,7 +859,7 @@ export class TranslationService {
     onResult?: (result: TranslationResult) => void
   ): Promise<TranslationResult[]> {
     const failedResults = results.filter(r => !r.success);
-    
+
     if (failedResults.length === 0) {
       this.log('info', '재시도할 실패한 청크가 없습니다.');
       return results;
@@ -956,7 +966,7 @@ export class TranslationService {
     onResult?: (result: TranslationResult) => void
   ): Promise<{ text: string; results: TranslationResult[] }> {
     const failedResults = results.filter(r => !r.success);
-    
+
     if (failedResults.length === 0) {
       this.log('info', '재시도할 실패한 청크가 없습니다.');
       // 기존 결과로 텍스트 복원
@@ -999,7 +1009,7 @@ export class TranslationService {
 
     // 3. 번역된 노드를 누적할 맵 (기존 성공 노드 + 새로 번역할 노드)
     const translatedNodeMap = new Map<string, TextNode>();
-    
+
     // 기존 성공한 결과의 노드들을 맵에 추가
     results.forEach(result => {
       if (result.success && result.translatedSegments) {
@@ -1018,7 +1028,7 @@ export class TranslationService {
 
     for (const failedResult of failedResults) {
       if (this.stopRequested) break;
-      
+
       const chunkIndex = failedResult.chunkIndex;
       const nodesToRetry = originalChunks[chunkIndex];
 
@@ -1036,7 +1046,7 @@ export class TranslationService {
 
         let newTranslatedNodes: EpubNode[];
         let success = false;
-        
+
         try {
           newTranslatedNodes = await this.translateEpubChunk(nodesToRetry, context, 1, chunkIndex);
           success = true;
@@ -1090,7 +1100,7 @@ export class TranslationService {
           progress.failedChunks++;
           progress.lastErrorMessage = newResult.error;
         }
-        
+
         const now = Date.now();
         const elapsedSeconds = (now - startTime) / 1000;
         if (progress.processedChunks > 0) {
@@ -1129,9 +1139,9 @@ export class TranslationService {
 
     this.log('info', `무결성 재번역 완료: 성공 ${progress.successfulChunks}개, 실패 ${progress.failedChunks}개`);
 
-    return { 
-      text: reconstructed, 
-      results: updatedResults.sort((a, b) => a.chunkIndex - b.chunkIndex) 
+    return {
+      text: reconstructed,
+      results: updatedResults.sort((a, b) => a.chunkIndex - b.chunkIndex)
     };
   }
 
@@ -1151,7 +1161,7 @@ export class TranslationService {
     onResult?: (result: TranslationResult) => void
   ): Promise<TranslationResult[]> {
     const failedResults = results.filter(r => !r.success);
-    
+
     if (failedResults.length === 0) {
       this.log('info', '재시도할 실패한 EPUB 청크가 없습니다.');
       return results;
@@ -1185,7 +1195,7 @@ export class TranslationService {
 
     for (const failedResult of failedResults) {
       if (this.stopRequested) break;
-      
+
       const chunkIndex = failedResult.chunkIndex;
       const nodesToRetry = originalChunks[chunkIndex];
 
@@ -1203,7 +1213,7 @@ export class TranslationService {
 
         let newTranslatedNodes: EpubNode[];
         let success = false;
-        
+
         try {
           // `translateEpubNodes`의 핵심 로직과 동일하게 재시도
           newTranslatedNodes = await this.translateEpubChunk(nodesToRetry, context, 1, chunkIndex);
@@ -1222,7 +1232,7 @@ export class TranslationService {
             );
             // 분할 정복은 일부라도 성공시키려 하므로, success로 간주할 수 있음
             // 다만, 완벽한 성공 여부를 가리려면 더 복잡한 확인이 필요. 우선은 결과 표시를 위해 true로 처리.
-            success = true; 
+            success = true;
           }
         }
 
@@ -1254,7 +1264,7 @@ export class TranslationService {
           progress.failedChunks++;
           progress.lastErrorMessage = newResult.error;
         }
-        
+
         const now = Date.now();
         const elapsedSeconds = (now - startTime) / 1000;
         if (progress.processedChunks > 0) {
@@ -1368,14 +1378,14 @@ export class TranslationService {
             chunkResults.set(i, restoredNodes);
             processedChunks++;
             successfulChunks++;
-            
+
             this.log('info', `⏩ 청크 ${i + 1} 스킵 (기존 결과 사용)`);
 
             // UI 갱신을 위해 onResult 호출 (ReviewPage에 즉시 반영됨)
             if (onResult) {
               onResult(existing);
             }
-            
+
             // 진행률 업데이트
             if (onProgress) {
               onProgress({
@@ -1399,15 +1409,15 @@ export class TranslationService {
           if (this.stopRequested) return;
 
           try {
-          const translated = await this.translateEpubChunk(
-            chunks[i],
-            context,
-            1,
-            i
-          );
+            const translated = await this.translateEpubChunk(
+              chunks[i],
+              context,
+              1,
+              i
+            );
 
             // [DEBUG] 1. translateEpubChunk의 직접적인 반환 값 확인
-            console.log(`[DEBUG 1/3] 청크 ${i+1} Raw Result from translateEpubChunk`, { 
+            console.log(`[DEBUG 1/3] 청크 ${i + 1} Raw Result from translateEpubChunk`, {
               nodeCount: translated.length,
               sampleContent: translated.length > 0 ? translated[0].content?.slice(0, 50) : 'N/A'
             });
@@ -1428,9 +1438,9 @@ export class TranslationService {
                 translatedSegments: translated.map(n => n.content || ''),
                 success: true
               };
-              
+
               // [DEBUG] 2. Store로 전송될 데이터 확인
-              console.log(`[DEBUG 2/3] 청크 ${i+1} Payload for onResult`, {
+              console.log(`[DEBUG 2/3] 청크 ${i + 1} Payload for onResult`, {
                 chunkIndex: resultPayload.chunkIndex,
                 segmentsCount: resultPayload.translatedSegments?.length,
                 sampleSegment: resultPayload.translatedSegments?.[0]?.slice(0, 50)
@@ -1471,7 +1481,7 @@ export class TranslationService {
             }
           } finally {
             processedChunks++;
-            
+
             // 진행률 및 ETA 업데이트
             if (onProgress) {
               const now = Date.now();
@@ -1523,15 +1533,15 @@ export class TranslationService {
         this.log('info', '🖼️ 이미지 주석 생성 시작...');
         const imageAnnotationService = new ImageAnnotationService(this.config, this.apiKey);
         if (this.onLog) {
-            imageAnnotationService.setLogCallback(this.onLog);
+          imageAnnotationService.setLogCallback(this.onLog);
         }
-        
+
         translatedNodes = await imageAnnotationService.annotateImages(
-            translatedNodes, 
-            zip, 
-            (progress) => {
-                 this.log('info', `이미지 처리: ${progress.processedImages}/${progress.totalImages} (${progress.currentStatusMessage})`);
-            }
+          translatedNodes,
+          zip,
+          (progress) => {
+            this.log('info', `이미지 처리: ${progress.processedImages}/${progress.totalImages} (${progress.currentStatusMessage})`);
+          }
         );
       }
 
@@ -1557,7 +1567,7 @@ export class TranslationService {
     if (textNodes.length === 0) {
       return nodes;
     }
-    
+
     const MAX_RETRIES = this.config.maxRetryAttempts;
     if (currentAttempt > MAX_RETRIES) {
       this.log('error', `❌ 최대 재시도(${MAX_RETRIES}) 도달: ${textNodes.length}개 노드 번역 실패.`);
@@ -1568,7 +1578,7 @@ export class TranslationService {
       id: n.id,
       text: n.content,
     }));
-    
+
     const jsonString = JSON.stringify(requestData, null, 2);
 
     // [Stateless] 전달받은 context의 용어집을 사용합니다.
@@ -1620,7 +1630,7 @@ export class TranslationService {
       responseText = await Promise.race([apiPromise, cancelPromise]);
       const translations: Array<{ id: string; translated_text: string }> = JSON.parse(responseText);
       const translationMap = new Map(translations.map((t) => [t.id, t.translated_text]));
-      
+
       // --- START: 데이터 누락 감지 및 재귀 재시도 로직 (디버깅 강화) ---
 
       const successfullyTranslatedNodes: EpubNode[] = [];
@@ -1640,26 +1650,26 @@ export class TranslationService {
       }
 
       let retriedNodes: EpubNode[] = [];
-      
+
       // [디버깅] 누락 발생 시 상세 로그 출력
       if (missingNodes.length > 0) {
         this.log('warning', `⚠️ [Debug:Attempt-${currentAttempt}] 응답 누락 감지: 전체 ${textNodes.length} 중 ${missingNodes.length}개 누락.`);
         this.log('debug', `   - 누락된 IDs: ${missingNodes.map(n => n.id).join(', ')}`);
-        
+
         // 재귀 호출
         retriedNodes = await this.translateEpubChunk(
-          missingNodes, 
+          missingNodes,
           context,
-          currentAttempt + 1 
+          currentAttempt + 1
         );
 
         // [디버깅] 재귀 호출 결과 검증
         this.log('info', `✅ [Debug:Attempt-${currentAttempt}] 재귀 호출 복귀: ${retriedNodes.length}개 노드 수신됨.`);
-        
+
         // 혹시 재귀 결과에서 ID가 꼬였는지 확인 (샘플 로깅)
         if (retriedNodes.length > 0) {
-             const sample = retriedNodes[0];
-             this.log('debug', `   - 재귀 결과 샘플(ID: ${sample.id}): "${sample.content?.slice(0, 30)}..."`);
+          const sample = retriedNodes[0];
+          this.log('debug', `   - 재귀 결과 샘플(ID: ${sample.id}): "${sample.content?.slice(0, 30)}..."`);
         }
       }
 
@@ -1668,21 +1678,21 @@ export class TranslationService {
 
       // [디버깅] 최종 매핑 검증
       if (missingNodes.length > 0) {
-         this.log('debug', `🔍 [Debug:Attempt-${currentAttempt}] 최종 병합: 성공(${successfullyTranslatedNodes.length}) + 재시도(${retriedNodes.length}) = 합계(${combinedTranslatedNodes.length})`);
+        this.log('debug', `🔍 [Debug:Attempt-${currentAttempt}] 최종 병합: 성공(${successfullyTranslatedNodes.length}) + 재시도(${retriedNodes.length}) = 합계(${combinedTranslatedNodes.length})`);
       }
 
       return nodes.map(originalNode => {
         if (finalTranslationMap.has(originalNode.id)) {
           const content = finalTranslationMap.get(originalNode.id)!;
-          
+
           // [디버깅] 중복 작성 의심 구간 확인
           // 원본 텍스트가 번역문에 포함되어 있는지 확인 (단순 포함 여부만 체크)
           if (missingNodes.some(mn => mn.id === originalNode.id)) {
-              if (content.includes(originalNode.content!) && content.length > originalNode.content!.length * 1.5) {
-                   this.log('warning', `🚨 [중복 의심] 재귀 번역된 노드(ID: ${originalNode.id})에 원문이 포함된 것 같습니다.`);
-                   this.log('debug', `   - 원문: ${originalNode.content?.slice(0, 20)}...`);
-                   this.log('debug', `   - 번역: ${content.slice(0, 20)}...`);
-              }
+            if (content.includes(originalNode.content!) && content.length > originalNode.content!.length * 1.5) {
+              this.log('warning', `🚨 [중복 의심] 재귀 번역된 노드(ID: ${originalNode.id})에 원문이 포함된 것 같습니다.`);
+              this.log('debug', `   - 원문: ${originalNode.content?.slice(0, 20)}...`);
+              this.log('debug', `   - 번역: ${content.slice(0, 20)}...`);
+            }
           }
 
           return { ...originalNode, content };
@@ -1792,7 +1802,7 @@ export class TranslationService {
     });
 
     this.log('info', `✅ 배치 매핑 성공: 원본 ${nodes.length}개 노드 중 ${sortedResults.length}개로 최종 결과 구성`);
-    
+
     return sortedResults;
   }
 
@@ -1802,11 +1812,11 @@ export class TranslationService {
   private restoreNodesFromResult(nodes: EpubNode[], result: TranslationResult): EpubNode[] | null {
     // 텍스트 노드만 추출 (순서 중요)
     const textNodes = nodes.filter(n => n.type === 'text');
-    
+
     // 1. [권장] 세그먼트 배열이 있는 경우 (완벽한 복원)
     if (result.translatedSegments && result.translatedSegments.length > 0) {
       const segments = result.translatedSegments;
-      
+
       // 전략 1: 텍스트 노드 개수와 세그먼트 개수가 일치하는 경우 (텍스트 노드만 저장된 경우)
       if (textNodes.length === segments.length) {
         const newNodes = JSON.parse(JSON.stringify(nodes));
@@ -1819,17 +1829,17 @@ export class TranslationService {
         });
         return newNodes;
       }
-      
+
       // 전략 2: 전체 노드 개수와 세그먼트 개수가 일치하는 경우 (비텍스트 포함 저장된 경우)
       if (nodes.length === segments.length) {
         const newNodes = JSON.parse(JSON.stringify(nodes));
-        
+
         newNodes.forEach((node: EpubNode, idx: number) => {
           // 텍스트 노드인 경우에만 내용을 덮어씀 (비텍스트는 원본 유지하거나, 저장된 값 사용)
           // 저장된 값이 공백("")인 경우가 많으므로, 텍스트 노드일 때만 적용하는 것이 안전함
           if (node.type === 'text') {
-             const content = segments[idx] || '';
-             node.content = content.includes('<br/>') ? content : content.replace(/\n/g, '<br/>');
+            const content = segments[idx] || '';
+            node.content = content.includes('<br/>') ? content : content.replace(/\n/g, '<br/>');
           }
         });
         return newNodes;
@@ -1837,14 +1847,14 @@ export class TranslationService {
 
       // 개수 불일치 -> 복원 실패
       this.log('warning', `복원 실패 상세: 노드(${nodes.length}개) / 텍스트노드(${textNodes.length}개) vs 저장된 세그먼트(${segments.length}개)`);
-      return null; 
+      return null;
     }
 
     // 2. [차선] 텍스트만 있는 경우 (\n\n 분할 시도)
     // 이전 버전 스냅샷 호환용
     if (result.translatedText) {
       const segments = result.translatedText.trim().split(/\n\n/);
-      
+
       if (textNodes.length !== segments.length) {
         return null; // 개수 불일치 -> 복원 실패
       }
