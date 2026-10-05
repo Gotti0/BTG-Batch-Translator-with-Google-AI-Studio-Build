@@ -285,7 +285,8 @@ ${segmentText}
 
     } catch (error) {
       if (GeminiClient.isRateLimitError(error as Error)) {
-        this.log('error', `API 할당량 초과(429) 감지. 용어집 추출을 중단합니다.`);
+        const { formattedSummary } = GeminiClient.getRateLimitDetails(error as Error);
+        this.log('error', `🛑 429 Rate Limit 감지: ${formattedSummary}. 용어집 추출을 중단합니다.`);
         this.requestStop();
         return [];
       }

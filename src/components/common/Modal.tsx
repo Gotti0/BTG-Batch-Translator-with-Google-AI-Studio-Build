@@ -207,7 +207,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
         </div>
       }
     >
-      <div className="text-gray-600">{message}</div>
+      <div className="text-gray-600 whitespace-pre-line">{message}</div>
     </Modal>
   );
 };
@@ -265,7 +265,7 @@ export const AlertDialog: React.FC<AlertDialogProps> = ({
         </div>
       }
     >
-      <div className="text-gray-600">{message}</div>
+      <div className="text-gray-600 whitespace-pre-line">{message}</div>
     </Modal>
   );
 };

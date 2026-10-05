@@ -75,7 +75,28 @@ export interface AppConfig {
   removeMarkdownBlocks: boolean;
   removeChunkIndexes: boolean;
   cleanHtmlTags: boolean;
+
+  // 작업 완료 알림 및 백그라운드 탭 절전 방지
+  enableSoundNotification: boolean;   // 번역 완료 시 차임 재생
+  enableSilentAudioLoop: boolean;     // 작업 중 무음 오디오를 재생해 브라우저의 백그라운드 탭 스로틀링을 막는다
+
+  // PDF 입력 (프롬프트를 1쪽짜리 PDF로 보내 MEDIA_RESOLUTION_LOW로 입력 토큰을 줄인다)
+  enablePdfInput: boolean;
+  pdfInputMode: 'standard' | 'extreme'; // standard: 본문 프롬프트만 PDF, extreme: 시스템 지침·히스토리까지 PDF
+  downloadDebugPdf: boolean;            // 요청에 쓴 PDF를 내려받아 확인
+
+  // 텍스트 번역본 EPUB 내보내기
+  epubSplitMode: 'chunk' | 'delimiter'; // 챕터를 청크 단위로 나눌지, 구분자 정규식으로 나눌지
+  epubDelimiterRegex: string;
+  epubDelimiterMinDistance: number;     // 이 글자 수(공백 제외) 미만으로 붙어 있는 구분자는 중복 제목으로 보고 무시
+  attachGlossaryToEnd: boolean;         // EPUB 끝에 용어집 부록을 붙인다
 }
+
+/**
+ * 기본 EPUB 챕터 구분자 정규식 (예: "제 12 화", "# 제3장")
+ */
+export const DEFAULT_EPUB_DELIMITER_REGEX = '^[\\t \\u3000#]*(제\\s*\\d+\\s*[장화]).*$';
+export const DEFAULT_EPUB_DELIMITER_MIN_DISTANCE = 10;
 
 /**
  * 기본 프리필 시스템 인스트럭션
@@ -267,6 +288,21 @@ export const defaultConfig: AppConfig = {
   removeMarkdownBlocks: true,
   removeChunkIndexes: true,
   cleanHtmlTags: true,
+
+  // 작업 완료 알림 및 백그라운드 탭 절전 방지
+  enableSoundNotification: false,
+  enableSilentAudioLoop: false,
+
+  // PDF 입력
+  enablePdfInput: false,
+  pdfInputMode: 'standard',
+  downloadDebugPdf: false,
+
+  // 텍스트 번역본 EPUB 내보내기
+  epubSplitMode: 'chunk',
+  epubDelimiterRegex: DEFAULT_EPUB_DELIMITER_REGEX,
+  epubDelimiterMinDistance: DEFAULT_EPUB_DELIMITER_MIN_DISTANCE,
+  attachGlossaryToEnd: false,
 };
 
 /**

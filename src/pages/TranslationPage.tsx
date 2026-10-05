@@ -26,13 +26,19 @@ import {
   IconButton
 } from '../components';
 import ThinkingSettings from '../components/common/ThinkingSettings';
+import { ProjectSettingsSection } from '../components/common/ProjectSettingsSection';
+import { NotificationSettings } from '../components/common/NotificationSettings';
+import { ExportSettingsSection } from '../components/common/ExportSettingsSection';
 import type { FileContent, TranslationContext } from '../types/dtos';
 import { useGlossaryStore } from '../stores/glossaryStore';
+import { SnapshotService } from '../services/SnapshotService';
+import { notifyWorkStarted, notifyWorkFinished } from '../services/SoundNotificationService';
+import { toast } from '../stores/toastStore';
 
 /**
  * 파일 업로드 영역 컴포넌트
  */
-function FileUploadSection({ onImportSnapshot, mode, onEpubChaptersChange, onModeChange, epubChapters }: { onImportSnapshot: (file: File) => Promise<{ mode: string; epubChapters?: any[] } | void>; mode: 'text' | 'epub'; onEpubChaptersChange: (chapters: any[]) => void; onModeChange: (mode: 'text' | 'epub') => void; epubChapters: any[] }) {
+function FileUploadSection({ mode, onEpubChaptersChange, epubChapters }: { mode: 'text' | 'epub'; onEpubChaptersChange: (chapters: any[]) => void; epubChapters: any[] }) {
   const { inputFiles, addInputFiles, removeInputFile, clearInputFiles, addLog } = useTranslationStore();
 
   // File 객체를 FileContent로 변환하여 스토어에 추가 또는 스냅샷 복구
@@ -41,21 +47,16 @@ function FileUploadSection({ onImportSnapshot, mode, onEpubChaptersChange, onMod
     let snapshotFound = false;
 
     for (const file of files) {
-      // JSON 파일(스냅샷) 감지
-      if (file.name.endsWith('.json')) {
+      // 스냅샷 파일(ZIP 또는 이전 버전 JSON)이면 작업을 통째로 복원한다.
+      // EPUB도 ZIP 형식이라 내용 검사로는 구분되지 않으므로 확장자로만 판단한다.
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.endsWith('.json') || lowerName.endsWith('.zip')) {
         addLog('info', `스냅샷 파일 감지: ${file.name}`);
-        const result = await onImportSnapshot(file);
-        // Phase 5: 스냅샷의 모드가 반환되면 자동으로 모드 전환
-        if (result && result.mode) {
-          onModeChange(result.mode as 'text' | 'epub');
-
-          // EPUB 챕터 정보가 있으면 업데이트
-          if (result.mode === 'epub' && result.epubChapters) {
-            onEpubChaptersChange(result.epubChapters);
-            addLog('info', `📚 EPUB 챕터 정보 복원됨: ${result.epubChapters.length}개`);
-          }
-
-          addLog('info', `📋 모드 자동 변경: ${result.mode}`);
+        try {
+          const result = await SnapshotService.restoreFromFile(file);
+          toast.success(`스냅샷 파일에서 작업을 복원했습니다 (청크 ${result.restoredChunks}개).`, '스냅샷 복원');
+        } catch (error) {
+          toast.error(`스냅샷 복원 실패: ${error instanceof Error ? error.message : String(error)}`, '스냅샷 복원');
         }
         snapshotFound = true;
         return;
@@ -102,7 +103,7 @@ function FileUploadSection({ onImportSnapshot, mode, onEpubChaptersChange, onMod
     if (textFiles.length > 0 && !snapshotFound) {
       addInputFiles(textFiles);
     }
-  }, [addInputFiles, addLog, mode, onImportSnapshot, onEpubChaptersChange, onModeChange]);
+  }, [addInputFiles, addLog, mode, onEpubChaptersChange]);
 
   const handleFileRemove = useCallback((index: number) => {
     removeInputFile(index);
@@ -123,7 +124,7 @@ function FileUploadSection({ onImportSnapshot, mode, onEpubChaptersChange, onMod
       </h2>
 
       <FileUpload
-        accept={mode === 'epub' ? ['.epub', '.json'] : ['.txt', '.json']}
+        accept={mode === 'epub' ? ['.epub', '.json', '.zip'] : ['.txt', '.json', '.zip']}
         multiple={mode === 'text'}
         maxSize={mode === 'epub' ? 100 * 1024 * 1024 : 50 * 1024 * 1024}
         onFilesSelected={handleFilesSelected}
@@ -134,7 +135,7 @@ function FileUploadSection({ onImportSnapshot, mode, onEpubChaptersChange, onMod
       <p className="text-xs text-gray-500 mt-2 ml-1">
         {mode === 'epub'
           ? '* EPUB 파일(.epub)을 업로드하여 번역할 수 있습니다.'
-          : '* 텍스트 파일(.txt)을 업로드하여 새 작업을 시작하거나, 작업 파일(.json)을 업로드하여 이어서 진행할 수 있습니다.'}
+          : '* 텍스트 파일(.txt)을 업로드하여 새 작업을 시작하거나, 스냅샷 파일(.zip, 이전 버전 .json)을 업로드하여 이어서 진행할 수 있습니다.'}
       </p>
 
       {/* EPUB 챕터 정보 */}
@@ -566,6 +567,56 @@ function TranslationSettings({ mode }: { mode: 'text' | 'epub' }) {
               </div>
             )}
           </div>
+
+          {/* PDF 입력 */}
+          <div className="mt-4">
+            <Checkbox
+              label="PDF 입력으로 입력 토큰 줄이기 (실험적)"
+              checked={config.enablePdfInput}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ enablePdfInput: e.target.checked })}
+              description="번역 요청의 프롬프트를 1쪽짜리 PDF로 바꿔 저해상도(MEDIA_RESOLUTION_LOW)로 보냅니다. 긴 청크도 입력 토큰이 거의 고정되지만, 모델이 PDF 글자를 잘못 읽으면 번역 품질이 떨어질 수 있습니다."
+            />
+            {config.enablePdfInput && (
+              <div className="mt-3 ml-6 p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-3">
+                <div className="flex flex-col sm:flex-row gap-3">
+                  {([
+                    { value: 'standard', label: '일반', description: '본문 프롬프트만 PDF로 보내고, 시스템 지침과 프리필 대화는 텍스트로 보냅니다.' },
+                    { value: 'extreme', label: '전체', description: '시스템 지침·프리필 대화·본문을 PDF 하나에 담습니다.' },
+                  ] as const).map((option) => (
+                    <label
+                      key={option.value}
+                      className={`flex-1 flex items-start gap-2 p-3 border rounded-lg cursor-pointer ${
+                        config.pdfInputMode === option.value ? 'border-blue-400 bg-blue-50' : 'border-gray-200 bg-white'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="pdf-input-mode"
+                        checked={config.pdfInputMode === option.value}
+                        onChange={() => updateConfig({ pdfInputMode: option.value })}
+                        className="mt-1 accent-blue-600"
+                      />
+                      <span>
+                        <span className="block text-sm font-semibold text-gray-800">{option.label}</span>
+                        <span className="block text-xs text-gray-500">{option.description}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <Checkbox
+                  label="요청에 쓴 PDF 내려받기 (확인용)"
+                  checked={config.downloadDebugPdf}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateConfig({ downloadDebugPdf: e.target.checked })}
+                  description="청크마다 PDF 파일이 하나씩 내려받아집니다."
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 작업 알림 */}
+        <div className="md:col-span-2">
+          <NotificationSettings />
         </div>
 
       </div>
@@ -768,7 +819,7 @@ function ResultPreview({ mode }: { mode: 'text' | 'epub' }) {
  * 설정 및 번역 페이지 메인 컴포넌트
  */
 export function TranslationPage() {
-  const { config, exportConfig } = useSettingsStore();
+  const { config } = useSettingsStore();
   const { entries: glossaryEntries } = useGlossaryStore();
   const { addLog, results, translatedText, addResult, translationMode, setTranslationMode } = useTranslationStore();
   const [mode, setMode] = useState<'text' | 'epub'>('text');
@@ -791,10 +842,45 @@ export function TranslationPage() {
     executeTranslation,
     cancelTranslation,
     retryFailedChunks,
-    exportSnapshot,
-    importSnapshot,
     downloadResult,
+    downloadEpubResult,
   } = useTranslation();
+
+  // 스냅샷 복원 등으로 입력 파일이 바뀌면 화면 모드(텍스트/EPUB)와 챕터 정보를 맞춘다
+  useEffect(() => {
+    if (inputFiles.length === 0) return;
+    const first = inputFiles[0];
+    if (first.isEpub) {
+      setMode('epub');
+      setEpubChapters(first.epubChapters ?? []);
+    } else {
+      setMode('text');
+      setEpubChapters([]);
+    }
+  }, [inputFiles]);
+
+  const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
+
+  const handleSaveSnapshot = useCallback(async () => {
+    setIsSavingSnapshot(true);
+    try {
+      const meta = await SnapshotService.saveManualSnapshot();
+      toast.success(`"${meta.projectTitle}" 스냅샷을 보관함에 저장했습니다.`, '스냅샷 저장');
+    } catch (error) {
+      toast.error(`스냅샷 저장 실패: ${error instanceof Error ? error.message : String(error)}`, '스냅샷 저장');
+    } finally {
+      setIsSavingSnapshot(false);
+    }
+  }, []);
+
+  const handleExportZip = useCallback(async () => {
+    try {
+      const fileName = await SnapshotService.exportCurrentAsZip();
+      addLog('info', `작업을 ZIP으로 내보냈습니다: ${fileName}`);
+    } catch (error) {
+      toast.error(`ZIP 내보내기 실패: ${error instanceof Error ? error.message : String(error)}`, 'ZIP 내보내기');
+    }
+  }, [addLog]);
 
   const handleStartTranslation = useCallback(async () => {
     // [개선 1] 시작 시 이전 완료 상태 초기화
@@ -808,11 +894,17 @@ export function TranslationPage() {
         // [개선 2] 명확한 시작 로그
         addLog('info', `🚀 [단계 1/4] EPUB 번역 작업을 시작합니다: ${epubFile.name}`);
 
+        await SnapshotService.beginNewAutoSession();
+        notifyWorkStarted(config);
+        let completed = false;
         try {
           const translationService = new TranslationService(config);
           // [추가] 로그 콜백 연결 (용어집 로깅 등 서비스 내부 로그를 UI에 표시)
           translationService.setLogCallback((entry) => {
             addLog(entry.level, entry.message);
+          });
+          translationService.setRateLimitCallback((details) => {
+            toast.error(`${details.formattedSummary}\n이미 보낸 요청만 마무리하고 번역을 멈춥니다.`, '429 Rate Limit', 8000);
           });
           // [추가] 서비스 인스턴스 저장 (중단용)
           epubServiceRef.current = translationService;
@@ -908,11 +1000,13 @@ export function TranslationPage() {
           setEpubDownloadName(downloadName);
 
           addLog('info', `✅ [단계 4/4] 모든 작업이 완료되었습니다! 아래 '결과 다운로드' 버튼을 눌러 파일을 저장하세요.`);
+          completed = true;
 
         } catch (error) {
           addLog('error', `❌ 작업 실패: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
           setIsEpubTranslating(false);
+          notifyWorkFinished({ enableSoundNotification: config.enableSoundNotification, completed });
         }
       } else {
         setIsEpubTranslating(false);
@@ -920,7 +1014,7 @@ export function TranslationPage() {
     } else {
       executeTranslation();
     }
-  }, [mode, inputFiles, executeTranslation, addLog, config]);
+  }, [mode, inputFiles, executeTranslation, addLog, config, glossaryEntries, results, addResult]);
 
   const handleStopTranslation = useCallback(() => {
     if (mode === 'epub') {
@@ -940,13 +1034,11 @@ export function TranslationPage() {
     retryFailedChunks();
   }, [retryFailedChunks]);
 
-  const handleExportSettings = useCallback(() => {
-    exportConfig();
-    addLog('info', '설정이 저장되었습니다.');
-  }, [exportConfig, addLog]);
-
   return (
     <div className="space-y-6 fade-in">
+      {/* 프로젝트 정보 및 표지 */}
+      <ProjectSettingsSection />
+
       {/* 모드 선택 */}
       <div className="bg-white rounded-lg shadow p-6">
         <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
@@ -1037,7 +1129,7 @@ export function TranslationPage() {
       </div>
 
       {/* 파일 업로드 (모드에 따라 다른 UI) */}
-      <FileUploadSection onImportSnapshot={importSnapshot} mode={mode} onEpubChaptersChange={setEpubChapters} onModeChange={setMode} epubChapters={epubChapters} />
+      <FileUploadSection mode={mode} onEpubChaptersChange={setEpubChapters} epubChapters={epubChapters} />
 
       {/* 번역 설정 */}
       <TranslationSettings mode={mode} />
@@ -1055,26 +1147,27 @@ export function TranslationPage() {
             {mode === 'epub' ? '📚 EPUB 작업 결과' : '📄 번역 결과'}
           </h2>
           <div className="flex gap-2">
-            {mode !== 'epub' && results.length > 0 && (
+            {results.length > 0 && (
               <Button
                 variant="outline"
                 size="sm"
                 leftIcon={<FileJson className="w-4 h-4" />}
-                onClick={() => exportSnapshot()}
-                title="현재 진행 상황을 파일로 저장하여 나중에 이어할 수 있습니다."
+                onClick={handleExportZip}
+                title="원문·번역 결과·설정·용어집을 ZIP 파일로 내려받습니다. 파일 업로드나 스냅샷 탭에서 다시 불러올 수 있습니다."
               >
-                작업 저장
+                ZIP 내보내기
               </Button>
             )}
-            {mode === 'epub' && results.length > 0 && (
+            {mode !== 'epub' && (
               <Button
                 variant="outline"
                 size="sm"
-                leftIcon={<FileJson className="w-4 h-4" />}
-                onClick={() => exportSnapshot()}
-                title="EPUB 번역 진행 상황을 파일로 저장하여 나중에 이어할 수 있습니다."
+                leftIcon={<BookOpen className="w-4 h-4" />}
+                onClick={() => downloadEpubResult()}
+                disabled={!results.some((r) => r.success)}
+                title="번역된 청크를 EPUB 전자책으로 묶어 내려받습니다. 표지·제목·작가가 필요합니다."
               >
-                작업 저장
+                EPUB 내보내기
               </Button>
             )}
             {mode !== 'epub' && (
@@ -1118,7 +1211,12 @@ export function TranslationPage() {
           </div>
         ) : (
           /* 기존 텍스트 모드 미리보기 (ResultPreview 컴포넌트 내용) */
-          <ResultPreview mode={mode} />
+          <>
+            <ResultPreview mode={mode} />
+            <div className="mt-4">
+              <ExportSettingsSection />
+            </div>
+          </>
         )}
       </div>
 
@@ -1165,10 +1263,12 @@ export function TranslationPage() {
           variant="outline"
           size="lg"
           leftIcon={<Save className="w-5 h-5" />}
-          onClick={handleExportSettings}
+          onClick={handleSaveSnapshot}
+          loading={isSavingSnapshot}
           className="whitespace-nowrap shrink-0"
+          title="설정·용어집·원문·번역 결과를 스냅샷 보관함에 수동 스냅샷으로 저장합니다."
         >
-          설정 저장
+          스냅샷 저장
         </Button>
       </div>
     </div>

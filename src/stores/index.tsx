@@ -34,3 +34,6 @@ export {
   useGlossarySearchQuery,
   useGlossaryStats,
 } from './glossaryStore';
+
+export { useProjectStore } from './projectStore';
+export { useToastStore, toast } from './toastStore';

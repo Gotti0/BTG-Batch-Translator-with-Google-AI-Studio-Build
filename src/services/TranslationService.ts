@@ -1,7 +1,19 @@
 // services/TranslationService.ts
 // Python domain/translation_service.py 의 TypeScript 변환
 
-import { GeminiClient, GeminiContentSafetyException, GenerationConfig } from './GeminiClient';
+import {
+  GeminiClient,
+  GeminiContentSafetyException,
+  GenerationConfig,
+  type PdfInputOptions,
+  type RateLimitDetails,
+} from './GeminiClient';
+import {
+  RequestGate,
+  GATE_CANCELLED_MESSAGE,
+  GATE_PRIORITY_MAIN,
+  GATE_PRIORITY_SUBCHUNK,
+} from './RequestGate';
 import { ChunkService } from './ChunkService';
 import { EpubChunkService } from './EpubChunkService';
 import { TextNodeService, TextNode } from './TextNodeService';
@@ -74,8 +86,16 @@ export class TranslationService {
   private textNodeService: TextNodeService;
   private config: AppConfig;
   private apiKey?: string;
+  // 새 요청을 더 만들지 않는다 (429 마무리 중단과 사용자 중단 공통)
   private stopRequested: boolean = false;
+  // 진행 중인 요청까지 버린다 (사용자 중단에서만)
+  private abortRequested: boolean = false;
+  private stopReason?: string;
   private onLog?: LogCallback;
+  private onRateLimit?: (details: RateLimitDetails) => void;
+
+  // 번역 요청의 RPM을 통제하는 게이트 (분할 재시도 서브청크를 먼저 내보낸다)
+  private requestGate: RequestGate;
 
   // 병렬 요청 취소를 위한 컨트롤러 집합
   private cancelControllers: Set<() => void> = new Set();
@@ -83,6 +103,7 @@ export class TranslationService {
     this.config = config;
     this.apiKey = apiKey;
     this.geminiClient = new GeminiClient(apiKey, config.requestsPerMinute);
+    this.requestGate = new RequestGate(config.requestsPerMinute);
     this.chunkService = new ChunkService(config.chunkSize);
     this.textNodeService = new TextNodeService();
   }
@@ -92,6 +113,13 @@ export class TranslationService {
    */
   setLogCallback(callback: LogCallback): void {
     this.onLog = callback;
+  }
+
+  /**
+   * 429로 작업을 멈출 때 호출될 콜백 설정
+   */
+  setRateLimitCallback(callback?: (details: RateLimitDetails) => void): void {
+    this.onRateLimit = callback;
   }
 
   /**
@@ -111,15 +139,20 @@ export class TranslationService {
 
     if (config.requestsPerMinute !== undefined) {
       this.geminiClient.setRequestsPerMinute(config.requestsPerMinute);
+      this.requestGate.setRequestsPerMinute(config.requestsPerMinute);
     }
   }
 
   /**
-   * 번역 중단 요청
+   * 번역 중단 요청 (사용자 중단: 진행 중인 요청까지 즉시 취소)
    */
   requestStop(): void {
     this.stopRequested = true;
+    this.abortRequested = true;
+    this.stopReason = '사용자 중단';
     this.log('warning', '번역 중단이 요청되었습니다.');
+
+    this.requestGate.cancelAll(this.stopReason);
 
     // 현재 진행 중인 모든 요청 취소
     this.cancelControllers.forEach(cancel => cancel());
@@ -127,11 +160,70 @@ export class TranslationService {
   }
 
   /**
+   * 마무리 중단: 새 요청은 내보내지 않고, 이미 API에 보낸 요청은 응답을 받아 결과에 반영한다.
+   * 이미 보낸 요청은 할당량을 이미 썼으므로 취소해도 돌려받을 것이 없다.
+   */
+  requestDrainStop(reason: string): void {
+    if (this.stopRequested) return;
+    this.stopRequested = true;
+    this.stopReason = reason;
+    const cancelled = this.requestGate.cancelAll(reason);
+    this.log(
+      'warning',
+      `${reason} → 새 요청을 멈추고 이미 보낸 요청만 마무리합니다.${cancelled > 0 ? ` (대기 중이던 요청 ${cancelled}건 취소)` : ''}`
+    );
+  }
+
+  /**
    * 중단 상태 리셋
    */
   resetStop(): void {
     this.stopRequested = false;
+    this.abortRequested = false;
+    this.stopReason = undefined;
     this.cancelControllers.clear();
+    this.requestGate.reset();
+  }
+
+  /**
+   * 게이트에서 API 호출 허가를 받는다. 중단된 뒤에는 바로 실패한다.
+   */
+  private async acquireRequestSlot(chunkIndex: number, isSubchunk: boolean): Promise<void> {
+    if (this.stopRequested) {
+      throw new Error(GATE_CANCELLED_MESSAGE);
+    }
+    await this.requestGate.acquire(
+      isSubchunk
+        ? { priority: GATE_PRIORITY_SUBCHUNK }
+        : { priority: GATE_PRIORITY_MAIN, orderKey: chunkIndex }
+    );
+  }
+
+  /**
+   * 설정에 PDF 입력이 켜져 있으면 번역 요청에 붙일 옵션을 만든다
+   */
+  private getPdfInputOptions(chunkIndex: number): PdfInputOptions | undefined {
+    if (!this.config.enablePdfInput) return undefined;
+    return {
+      enabled: true,
+      mode: this.config.pdfInputMode,
+      downloadDebug: this.config.downloadDebugPdf,
+      label: `chunk_${chunkIndex + 1}`,
+    };
+  }
+
+  /**
+   * 429 오류를 기록하고 마무리 중단으로 전환한다.
+   * @returns 로그·결과 메시지에 쓸 한도 요약
+   */
+  private handleRateLimit(error: Error, label: string): string {
+    const details = GeminiClient.getRateLimitDetails(error);
+    if (!this.stopRequested) {
+      this.log('error', `🛑 429 Rate Limit 감지 (${label}): ${details.formattedSummary}`);
+      this.requestDrainStop(`429 Rate Limit (${details.limitTypeName})`);
+      this.onRateLimit?.(details);
+    }
+    return details.formattedSummary;
   }
 
   /**
@@ -266,6 +358,8 @@ export class TranslationService {
     const generationConfig: GenerationConfig = {
       temperature: this.config.temperature,
       topP: this.config.topP,
+      skipRpmDelay: true,
+      pdfInput: this.getPdfInputOptions(chunkIndex),
     };
 
     // 취소 함수 정의
@@ -284,6 +378,9 @@ export class TranslationService {
     }
 
     try {
+      // enableSafetyRetry=false로 들어오는 호출은 분할 재시도의 서브청크다
+      await this.acquireRequestSlot(chunkIndex, !enableSafetyRetry);
+
       let apiPromise: Promise<string>;
 
       if (this.config.enablePrefillTranslation) {
@@ -344,17 +441,27 @@ export class TranslationService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      // [추가] 429 Rate Limit 에러 감지 시 번역 중단
+      // 게이트 대기 중 중단된 요청은 API를 호출하지 않았다
+      if (errorMessage === GATE_CANCELLED_MESSAGE) {
+        return {
+          chunkIndex,
+          originalText: chunkText,
+          translatedText: '',
+          success: false,
+          error: this.stopReason ?? '작업 중단',
+        };
+      }
+
+      // 429 Rate Limit: 새 요청을 멈추고 이미 보낸 요청은 마무리한다
       if (GeminiClient.isRateLimitError(error as Error)) {
-        this.log('error', `API 할당량 초과(429) 감지. 번역 작업을 중단합니다.`);
-        this.requestStop(); // 전체 작업 중단 요청
+        const summary = this.handleRateLimit(error as Error, `청크 ${chunkIndex + 1}`);
 
         return {
           chunkIndex,
           originalText: chunkText,
           translatedText: '',
           success: false,
-          error: 'API 할당량 초과(429)로 인한 자동 중단',
+          error: `API 할당량 초과(429): ${summary}`,
         };
       }
 
@@ -480,10 +587,12 @@ export class TranslationService {
 
     // 7. 각 서브 청크 순차 처리 (하위 청크는 순차 처리 유지하여 복잡도 관리)
     const translatedParts: string[] = [];
+    // 중단으로 일부 조각이 빠지면 성공으로 돌려주지 않는다 ('[중단됨]'이 번역문에 섞이는 것을 막음)
+    let interrupted = false;
 
     for (let i = 0; i < subChunks.length; i++) {
       if (this.stopRequested) {
-        translatedParts.push('[중단됨]');
+        interrupted = true;
         break;
       }
 
@@ -493,13 +602,11 @@ export class TranslationService {
         // translateChunk가 에러를 가로채지 않고 그대로 던지거나 실패를 반환하게 함
         const result = await this.translateChunk(subChunks[i], originalIndex, context, false);
 
-        if (this.stopRequested) {
-          translatedParts.push('[중단됨]');
-          break;
-        }
-
         if (result.success) {
           translatedParts.push(result.translatedText);
+        } else if (this.stopRequested) {
+          interrupted = true;
+          break;
         } else {
           // 실패 시 해당 조각에 대해 재귀 호출 (다음 시도 횟수 증가)
           this.log('info', `서브 청크 ${i + 1}/${subChunks.length} 실패. 재귀 분할 진입.`);
@@ -509,9 +616,17 @@ export class TranslationService {
             context,
             currentAttempt + 1
           );
+          if (!retryResult.success && this.stopRequested) {
+            interrupted = true;
+            break;
+          }
           translatedParts.push(retryResult.translatedText);
         }
       } catch (error) {
+        if (this.stopRequested) {
+          interrupted = true;
+          break;
+        }
         // 예외 발생 시에도 재귀 시도
         this.log('error', `서브 청크 처리 중 예외 발생. 재귀 분할 시도.`);
         const retryResult = await this.retryWithSmallerChunks(
@@ -522,6 +637,16 @@ export class TranslationService {
         );
         translatedParts.push(retryResult.translatedText);
       }
+    }
+
+    if (interrupted) {
+      return {
+        chunkIndex: originalIndex,
+        originalText: chunkText,
+        translatedText: '',
+        success: false,
+        error: this.stopReason ?? '작업 중단',
+      };
     }
 
     return {
@@ -629,7 +754,7 @@ export class TranslationService {
       // break를 하면 뒤에 있는 existingResults를 못 찾으므로 continue로 처리
       if (this.stopRequested) {
         if (!stopLogged) {
-          this.log('warning', '번역이 사용자에 의해 중단되었습니다.');
+          this.log('warning', `번역이 중단되었습니다 (${this.stopReason ?? '중단 요청'}).`);
           stopLogged = true;
         }
         continue; // 다음 청크로 이동 (API 호출 스킵)
@@ -646,7 +771,7 @@ export class TranslationService {
         try {
           const result = await this.translateChunk(chunks[i], i, context, true);
 
-          if (this.stopRequested) return;
+          if (this.abortRequested) return;
 
           results.push(result);
           onResult?.(result);
@@ -901,7 +1026,7 @@ export class TranslationService {
           true
         );
 
-        if (this.stopRequested) return;
+        if (this.abortRequested) return;
 
         // 결과 업데이트
         const index = updatedResults.findIndex(r => r.chunkIndex === failedResult.chunkIndex);
@@ -1065,7 +1190,7 @@ export class TranslationService {
           }
         }
 
-        if (this.stopRequested) return;
+        if (this.abortRequested) return;
 
         // 번역된 노드를 맵에 업데이트
         newTranslatedNodes.forEach(node => {
@@ -1236,7 +1361,7 @@ export class TranslationService {
           }
         }
 
-        if (this.stopRequested) return;
+        if (this.abortRequested) return;
 
         // 새로운 TranslationResult 객체 생성
         const newResult: TranslationResult = {
@@ -1361,7 +1486,7 @@ export class TranslationService {
       for (let i = 0; i < chunks.length; i++) {
         // 중단 체크
         if (this.stopRequested) {
-          this.log('warning', '번역이 사용자에 의해 중단되었습니다.');
+          this.log('warning', `번역이 중단되었습니다 (${this.stopReason ?? '중단 요청'}).`);
           break;
         }
 
@@ -1560,7 +1685,8 @@ export class TranslationService {
     nodes: EpubNode[],
     context: TranslationContext,
     currentAttempt: number = 1,
-    chunkIndex: number = 0
+    chunkIndex: number = 0,
+    isSubchunk: boolean = false
   ): Promise<EpubNode[]> {
     const textNodes = nodes.filter((n) => n.type === 'text');
 
@@ -1599,6 +1725,8 @@ export class TranslationService {
           required: ['id', 'translated_text'],
         },
       },
+      skipRpmDelay: true,
+      pdfInput: this.getPdfInputOptions(chunkIndex),
     };
 
     let cancelThisRequest: (() => void) | undefined;
@@ -1608,6 +1736,9 @@ export class TranslationService {
     if (cancelThisRequest) this.cancelControllers.add(cancelThisRequest);
 
     try {
+      // 누락 노드 재요청과 분할 재시도는 서브청크로 취급해 먼저 내보낸다
+      await this.acquireRequestSlot(chunkIndex, isSubchunk || currentAttempt > 1);
+
       let responseText: string;
       let apiPromise: Promise<string>;
 
@@ -1660,7 +1791,9 @@ export class TranslationService {
         retriedNodes = await this.translateEpubChunk(
           missingNodes,
           context,
-          currentAttempt + 1
+          currentAttempt + 1,
+          chunkIndex,
+          true
         );
 
         // [디버깅] 재귀 호출 결과 검증
@@ -1704,9 +1837,12 @@ export class TranslationService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
+      if (errorMessage === GATE_CANCELLED_MESSAGE) {
+        throw error;
+      }
+
       if (GeminiClient.isRateLimitError(error as Error)) {
-        this.log('error', `API 할당량 초과(429) 감지. 번역 작업을 중단합니다.`);
-        this.requestStop();
+        this.handleRateLimit(error as Error, `EPUB 청크 ${chunkIndex + 1}`);
         throw error;
       }
 
@@ -1776,7 +1912,7 @@ export class TranslationService {
       if (this.stopRequested) break;
 
       try {
-        const translatedBatch = await this.translateEpubChunk(batch, context);
+        const translatedBatch = await this.translateEpubChunk(batch, context, 1, originalChunkIndex, true);
         translatedBatch.forEach(node => resultsMap.set(node.id, node));
       } catch (error) {
         if (this.stopRequested) break;

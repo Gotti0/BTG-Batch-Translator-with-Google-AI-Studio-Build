@@ -34,3 +34,13 @@ export type {
   CheckboxProps, 
   SliderProps 
 } from './FormElements';
+
+// 알림·오류 처리
+export { ToastContainer } from './ToastContainer';
+export { ErrorBoundary } from './ErrorBoundary';
+
+// 프로젝트·내보내기·알림 설정
+export { ProjectSettingsSection } from './ProjectSettingsSection';
+export { CoverImageManager } from './CoverImageManager';
+export { NotificationSettings } from './NotificationSettings';
+export { ExportSettingsSection } from './ExportSettingsSection';
