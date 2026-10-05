@@ -75,6 +75,8 @@ interface TranslationState {
   
   // === 전체 리셋 ===
   reset: () => void;
+  // 실행 로그는 남기고 작업 내용(파일·결과·진행률)만 비운다
+  resetWork: () => void;
 }
 
 /**
@@ -283,6 +285,11 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   // === 전체 리셋 ===
   reset: () => {
     set(initialState);
+  },
+
+  resetWork: () => {
+    const { logs } = get();
+    set({ ...initialState, logs });
   },
 }));
 

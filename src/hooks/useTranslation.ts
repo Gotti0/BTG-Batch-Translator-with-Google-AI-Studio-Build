@@ -7,11 +7,14 @@ import { useTranslationStore } from '../stores/translationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useGlossaryStore } from '../stores/glossaryStore';
 import { TranslationService } from '../services/TranslationService';
-import { ChunkService } from '../services/ChunkService';
 import { EpubService } from '../services/EpubService';
-import { EpubChunkService } from '../services/EpubChunkService';
-import type { TranslationJobProgress, TranslationResult, TranslationSnapshot, FileContent, TranslationContext } from '../types/dtos';
-import type { AppConfig } from '../types/config';
+import { SnapshotService } from '../services/SnapshotService';
+import { notifyWorkStarted, notifyWorkFinished } from '../services/SoundNotificationService';
+import { toast } from '../stores/toastStore';
+import { useProjectStore } from '../stores/projectStore';
+import { triggerDownload, getOutputBaseName } from '../utils/downloadUtils';
+import { validateEpubExportRequirements, prepareGlossaryForEpubExport } from '../utils/epubExportUtils';
+import type { TranslationJobProgress, TranslationResult, TranslationContext } from '../types/dtos';
 
 /**
  * 번역 기능을 제공하는 커스텀 훅
@@ -54,6 +57,15 @@ export function useTranslation() {
       serviceRef.current.setLogCallback((entry) => {
         addLog(entry.level, entry.message);
       });
+
+      // 429로 작업이 멈추면 어떤 한도에 걸렸는지 바로 보이도록 알린다
+      serviceRef.current.setRateLimitCallback((details) => {
+        toast.error(
+          `${details.formattedSummary}\n이미 보낸 요청만 마무리하고 번역을 멈춥니다.`,
+          '429 Rate Limit',
+          8000
+        );
+      });
     } else {
       // 설정 업데이트
       serviceRef.current.updateConfig(config);
@@ -79,7 +91,11 @@ export function useTranslation() {
     const existingResults = results.length > 0 ? results : undefined;
 
     isTranslatingRef.current = true;
+    // 번역 전 상태를 지금까지의 자동 스냅샷에 마저 남기고, 이번 실행은 새 자동 스냅샷에 기록한다
+    await SnapshotService.beginNewAutoSession();
     startTranslation();
+    notifyWorkStarted(config);
+    let completed = false;
 
     try {
       const service = getOrCreateService();
@@ -145,11 +161,12 @@ export function useTranslation() {
           addLog('warning', `${failCount}개 청크가 번역에 실패했습니다. 검토 탭에서 확인하세요.`);
         }
       }
+      completed = true;
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       addLog('error', `번역 중 오류 발생: ${errorMessage}`);
-      
+
       updateProgress({
         totalChunks: 0,
         processedChunks: 0,
@@ -161,6 +178,7 @@ export function useTranslation() {
     } finally {
       isTranslatingRef.current = false;
       stopTranslation();
+      notifyWorkFinished({ enableSoundNotification: config.enableSoundNotification, completed });
     }
   }, [
     inputFiles,
@@ -202,6 +220,9 @@ export function useTranslation() {
 
     isTranslatingRef.current = true;
     addLog('info', `${failedResults.length}개 실패한 청크 재번역 시작`);
+    await SnapshotService.beginNewAutoSession();
+    notifyWorkStarted(config);
+    let completed = false;
 
     const service = getOrCreateService();
     const onProgress = (progress: TranslationJobProgress) => updateProgress(progress);
@@ -274,6 +295,7 @@ export function useTranslation() {
       const finalSuccessCount = retriedResults.filter(r => !results.find(pr => pr.chunkIndex === r.chunkIndex)?.success && r.success).length;
 
       addLog('info', `재번역 완료: ${finalSuccessCount}/${totalRetried}개 청크 재번역 성공`);
+      completed = true;
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -281,8 +303,9 @@ export function useTranslation() {
     } finally {
       isTranslatingRef.current = false;
       stopTranslation(); // isRunning 상태를 false로 변경
+      notifyWorkFinished({ enableSoundNotification: config.enableSoundNotification, completed });
     }
-  }, [results, inputFiles, getOrCreateService, updateProgress, setResults, updateResult, setTranslatedText, addLog, stopTranslation, translationMode]);
+  }, [results, inputFiles, config, getOrCreateService, updateProgress, setResults, updateResult, setTranslatedText, addLog, stopTranslation, translationMode]);
 
   // [NEW] 단일 청크 즉시 재번역
   const retrySingleChunk = useCallback(async (chunkIndex: number) => {
@@ -304,8 +327,10 @@ export function useTranslation() {
 
     try {
       const service = getOrCreateService();
+      // 직전 작업이 429로 멈춰 있으면 게이트가 닫혀 있으므로 새 작업으로 연다
+      service.resetStop();
       const context: TranslationContext = { glossaryEntries };
-      
+
       // 3. 단일 청크 번역 요청 (안전 모드 재시도 활성화)
       const newResult = await service.translateChunk(
         targetResult.originalText,
@@ -338,363 +363,52 @@ export function useTranslation() {
       return;
     }
 
-    const blob = new Blob([translatedText], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename || `translated_${new Date().toISOString().slice(0, 10)}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const downloadName = filename || `${getOutputBaseName(inputFiles)}.txt`;
+    triggerDownload(new Blob([translatedText], { type: 'text/plain;charset=utf-8' }), downloadName);
+    addLog('info', `번역 결과가 다운로드되었습니다: ${downloadName}`);
+  }, [translatedText, inputFiles, addLog]);
 
-    addLog('info', `번역 결과가 다운로드되었습니다: ${a.download}`);
-  }, [translatedText, addLog]);
+  // 텍스트 번역본을 EPUB 전자책으로 내보내기
+  const downloadEpubResult = useCallback(async (filename?: string) => {
+    const project = useProjectStore.getState().project;
+    const completedResults = results
+      .filter((r) => r.success && r.translatedText?.trim())
+      .sort((a, b) => a.chunkIndex - b.chunkIndex);
 
-  // === 작업 이어하기(Snapshot) 기능 ===
-
-  /**
-   * Phase 5: EPUB 파일을 Base64로 인코딩
-   */
-  const encodeEpubToBase64 = useCallback(async (epubFile: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const result = event.target?.result as string;
-        // data:application/octet-stream;base64,... 형식에서 base64 부분만 추출
-        const base64 = result.split(',')[1] || result;
-        resolve(base64);
-      };
-      reader.onerror = () => reject(new Error('EPUB 파일 인코딩 실패'));
-      reader.readAsDataURL(epubFile);
-    });
-  }, []);
-
-  /**
-   * [NEW] 현재 작업을 스냅샷 객체로 생성 (자동 저장용)
-   */
-  const createSnapshot = useCallback(async (): Promise<TranslationSnapshot | null> => {
-    if (inputFiles.length === 0) {
-      addLog('debug', '자동 저장 건너뜀: 내보낼 작업 없음');
-      return null;
-    }
-
-    const isEpubMode = inputFiles[0]?.isEpub || false;
-    const mode = isEpubMode ? 'epub' : 'text';
-    const sourceText = inputFiles.map(f => f.content).join('\n\n');
-
-    const snapshot: TranslationSnapshot = {
-      meta: {
-        version: '1.1-autosave', // 버전 명시
-        created_at: new Date().toISOString(),
-        app_version: '0.0.3', 
-      },
-      source_info: {
-        file_name: inputFiles[0]?.name || 'unknown',
-        file_size: sourceText.length,
-      },
-      config: {
-        chunk_size: config.chunkSize,
-        model_name: config.modelName,
-        prompt_template: config.prompts,
-        
-        temperature: config.temperature,
-        requests_per_minute: config.requestsPerMinute,
-        max_workers: config.maxWorkers,
-        
-        enable_prefill_translation: config.enablePrefillTranslation,
-        prefill_system_instruction: config.prefillSystemInstruction,
-        prefill_cached_history: config.prefillCachedHistory,
-        
-        enable_dynamic_glossary_injection: config.enableDynamicGlossaryInjection,
-        max_glossary_entries_per_chunk_injection: config.maxGlossaryEntriesPerChunkInjection,
-        max_glossary_chars_per_chunk_injection: config.maxGlossaryCharsPerChunkInjection,
-        glossary_extraction_prompt: config.glossaryExtractionPrompt,
-        
-        enable_image_annotation: config.enableImageAnnotation,
-        epub_max_nodes_per_chunk: config.epubMaxNodesPerChunk, // EPUB 노드 설정 추가
-      },
-      mode: mode,
-      source_text: sourceText,
-      progress: {
-        total_chunks: progress?.totalChunks || results.length,
-        processed_chunks: progress?.processedChunks || results.filter(r => r.success).length,
-      },
-      translated_chunks: {},
-    };
-
-    results.forEach(result => {
-      if (result.success) {
-        const key = result.chunkIndex.toString();
-        snapshot.translated_chunks[key] = {
-          original_text: result.originalText,
-          translated_text: result.translatedText,
-          translated_segments: result.translatedSegments,
-          status: 'success',
-        };
-      }
-    });
-
-    if (mode === 'epub') {
-      const epubChapters = inputFiles[0]?.epubChapters;
-      if (epubChapters && epubChapters.length > 0) {
-        snapshot.epub_structure = {
-          chapters: epubChapters.map((ch: any) => ({
-            id: ch.id || '',
-            filename: ch.filename || '',
-            nodeCount: ch.nodes?.length || 0,
-          })),
-        };
-      }
-      
-      const epubFile = inputFiles[0]?.epubFile;
-      if (epubFile) {
-        try {
-          const base64Binary = await encodeEpubToBase64(epubFile);
-          snapshot.epub_binary = base64Binary;
-        } catch (error) {
-          addLog('warning', `자동 저장 중 EPUB 바이너리 저장 실패: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-      }
-    }
-    
-    addLog('debug', `스냅샷 객체 생성 완료 (모드: ${mode})`);
-    return snapshot;
-  }, [inputFiles, results, progress, config, addLog, encodeEpubToBase64]);
-
-  /**
-   * 현재 작업을 스냅샷(JSON)으로 내보내기 (파일 다운로드)
-   */
-  const exportSnapshot = useCallback(async () => {
-    const snapshot = await createSnapshot();
-    if (!snapshot) {
-      addLog('warning', '내보낼 작업이 없습니다.');
-      return;
-    }
-    
-    // 파일 다운로드 로직
-    const jsonStr = JSON.stringify(snapshot, null, 2);
-    const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `btg_snapshot_${snapshot.mode}_${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    addLog('info', `작업 스냅샷이 저장되었습니다 (${snapshot.mode}): ${a.download}`);
-  }, [createSnapshot, addLog]);
-
-
-  /**
-   * Phase 5: Base64에서 EPUB 파일로 디코딩
-   */
-  const decodeBase64ToEpub = useCallback(async (base64: string, filename: string): Promise<File> => {
-    const binaryString = atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    const blob = new Blob([bytes], { type: 'application/epub+zip' });
-    return new File([blob], filename, { type: 'application/epub+zip' });
-  }, []);
-
-  /**
-   * [Refactored] 스냅샷 객체로부터 상태를 복원하는 핵심 로직
-   */
-  const restoreFromSnapshotObject = useCallback(async (snapshot: TranslationSnapshot): Promise<{ mode: string; epubChapters?: any[] } | void> => {
-    // 1. 유효성 검사
-    if (!snapshot.source_text || !snapshot.config?.chunk_size) {
-      addLog('error', '유효하지 않은 스냅샷 파일입니다. (필수 필드 누락)');
+    const validation = validateEpubExportRequirements(project, completedResults.length > 0);
+    if (!validation.valid) {
+      toast.warning(validation.error || 'EPUB으로 내보낼 수 없습니다.', 'EPUB 내보내기');
       return;
     }
 
-    // 2. 설정 복구 (스네이크 케이스 -> 카멜 케이스 변환 매핑)
-    // snapshot.config(저장된 값)을 AppConfig(앱 설정) 키에 맞게 매핑합니다.
-    const restoredConfig: Partial<AppConfig> = {
-      ...config, // 기존 설정을 베이스로 함 (누락된 필드 방지)
-      
-      // [기본 설정 복구]
-      chunkSize: snapshot.config.chunk_size,
-      modelName: snapshot.config.model_name,
-      prompts: snapshot.config.prompt_template || config.prompts, // 키 이름 변경 주의 (prompts <-> prompt_template)
-      
-      temperature: snapshot.config.temperature ?? config.temperature,
-      requestsPerMinute: snapshot.config.requests_per_minute ?? config.requestsPerMinute,
-      maxWorkers: snapshot.config.max_workers ?? config.maxWorkers,
-      
-      // [프리필 설정 복구]
-      enablePrefillTranslation: snapshot.config.enable_prefill_translation ?? config.enablePrefillTranslation,
-      prefillSystemInstruction: snapshot.config.prefill_system_instruction ?? config.prefillSystemInstruction,
-      prefillCachedHistory: snapshot.config.prefill_cached_history ?? config.prefillCachedHistory,
-      
-      // [용어집 설정 복구]
-      enableDynamicGlossaryInjection: snapshot.config.enable_dynamic_glossary_injection ?? config.enableDynamicGlossaryInjection,
-      maxGlossaryEntriesPerChunkInjection: snapshot.config.max_glossary_entries_per_chunk_injection ?? config.maxGlossaryEntriesPerChunkInjection,
-      maxGlossaryCharsPerChunkInjection: snapshot.config.max_glossary_chars_per_chunk_injection ?? config.maxGlossaryCharsPerChunkInjection,
-      glossaryExtractionPrompt: snapshot.config.glossary_extraction_prompt ?? config.glossaryExtractionPrompt,
-      
-      // [EPUB 설정 복구]
-      enableImageAnnotation: snapshot.config.enable_image_annotation ?? config.enableImageAnnotation,
-      epubMaxNodesPerChunk: snapshot.config.epub_max_nodes_per_chunk ?? config.epubMaxNodesPerChunk,
-    };
+    const glossaryTerms = config.attachGlossaryToEnd ? prepareGlossaryForEpubExport(glossaryEntries) : [];
+    addLog(
+      'info',
+      `📖 EPUB 생성 시작: "${project.title}" (청크 ${completedResults.length}개, ${config.epubSplitMode === 'delimiter' ? '구분자' : '청크'} 단위 분할${config.attachGlossaryToEnd ? `, 부록 용어집 ${glossaryTerms.length}개` : ''})`
+    );
 
-    updateConfig(restoredConfig);
-    addLog('info', `설정이 복구되었습니다. (청크 크기: ${restoredConfig.chunkSize})`);
-
-    const snapshotMode = snapshot.mode || 'text';
-    addLog('info', `📋 스냅샷 모드: ${snapshotMode}`);
-
-    // 3. EPUB 모드 복구
-    if (snapshotMode === 'epub' && snapshot.epub_binary && snapshot.epub_structure) {
-      try {
-        addLog('info', '📦 EPUB 바이너리 디코딩 중...');
-        const epubFile = await decodeBase64ToEpub(
-          snapshot.epub_binary,
-          snapshot.source_info.file_name || 'restored.epub'
-        );
-
-        const epubService = new EpubService();
-        const restoredEpubChapters = await epubService.parseEpubFile(epubFile);
-        addLog('info', `✅ EPUB 복구 완료: ${restoredEpubChapters.length}개 챕터`);
-
-        const restoredFile: FileContent = {
-          name: snapshot.source_info.file_name || 'restored.epub',
-          content: `[EPUB File] ${restoredEpubChapters.length} chapters loaded`,
-          size: snapshot.source_info.file_size || 0,
-          lastModified: Date.now(),
-          epubFile: epubFile,
-          epubChapters: restoredEpubChapters,
-          isEpub: true,
-        };
-        
-        // (이하 EPUB 결과 복구 로직은 복잡성으로 인해 기존 로직을 최대한 유지)
-        const restoredResults: TranslationResult[] = [];
-        let successfulCount = 0;
-
-        const sortedKeys = Object.keys(snapshot.translated_chunks).map(k => parseInt(k)).sort((a, b) => a - b);
-        const allSegments: string[] = [];
-        let lastIndex = -1;
-        
-        for (const key of sortedKeys) {
-           if (key !== lastIndex + 1) {
-              addLog('warning', `스냅샷에 누락된 청크(인덱스 ${lastIndex + 1})가 있어, 이후 데이터는 제외됩니다.`);
-              break;
-           }
-           const chunkData = snapshot.translated_chunks[key.toString()];
-           if (chunkData.status === 'success' && chunkData.translated_segments) {
-              allSegments.push(...chunkData.translated_segments);
-           } else {
-              break;
-           }
-           lastIndex = key;
-        }
-        addLog('info', `복원 가능한 번역 세그먼트: ${allSegments.length}개`);
-        
-        const epubChunkService = new EpubChunkService(
-          restoredConfig.chunkSize,
-          restoredConfig.epubMaxNodesPerChunk
-        );
-        const allNodes = restoredEpubChapters.flatMap((ch: any) => ch.nodes);
-        const newChunks = epubChunkService.splitEpubNodesIntoChunks(allNodes);
-        
-        let segmentOffset = 0;
-        let isAllNodesMode = true; 
-        
-        // ... (EPUB 세그먼트 매핑 로직)
-
-        for (let i = 0; i < newChunks.length; i++) {
-           const chunk = newChunks[i];
-           const chunkTextNodes = chunk.filter((n: any) => n.type === 'text');
-           const requiredSegments = isAllNodesMode ? chunk.length : chunkTextNodes.length;
-           if (segmentOffset + requiredSegments <= allSegments.length) {
-              const chunkSegments = allSegments.slice(segmentOffset, segmentOffset + requiredSegments);
-              const originalText = chunk.map((n: any) => n.content || '').join('\n\n');
-              let segmentIdx = 0;
-              const translatedParts = chunk.map((n: any) => isAllNodesMode ? (chunkSegments[segmentIdx++] || '') : (n.type === 'text' ? (chunkSegments[segmentIdx++] || '') : (n.content || '')));
-              const translatedText = translatedParts.join('\n\n');
-              restoredResults.push({ chunkIndex: i, originalText, translatedText, translatedSegments: chunkSegments, success: true });
-              segmentOffset += requiredSegments;
-              successfulCount++;
-           } else {
-              break;
-           }
-        }
-        
-        const restoredProgress: TranslationJobProgress = {
-          totalChunks: newChunks.length,
-          processedChunks: successfulCount,
-          successfulChunks: successfulCount,
-          failedChunks: 0,
-          currentStatusMessage: `EPUB 복구 완료. ${newChunks.length}개 청크 중 ${successfulCount}개 복원됨.`,
-        };
-        restoreSession([restoredFile], restoredResults, restoredProgress);
-        addLog('info', `🎉 EPUB 스냅샷 복구 완료. 현재 모드: EPUB 번역`);
-        return { mode: snapshotMode, epubChapters: restoredEpubChapters };
-
-      } catch (error) {
-        addLog('error', `EPUB 복구 실패: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      }
-    }
-
-    // 4. 텍스트 모드 복구 (또는 EPUB 실패 시 폴백)
-    const restoredFile: FileContent = {
-      name: snapshot.source_info.file_name || 'restored_source.txt',
-      content: snapshot.source_text,
-      size: snapshot.source_info.file_size || 0,
-      lastModified: Date.now(),
-    };
-    
-    const chunkService = new ChunkService(restoredConfig.chunkSize);
-    const chunks = chunkService.splitTextIntoChunks(snapshot.source_text);
-    const restoredResults: TranslationResult[] = [];
-    let successfulCount = 0;
-
-    chunks.forEach((chunkText, index) => {
-      const savedChunk = snapshot.translated_chunks[index.toString()];
-      if (savedChunk && savedChunk.status === 'success') {
-        restoredResults.push({
-          chunkIndex: index,
-          originalText: chunkText,
-          translatedText: savedChunk.translated_text,
-          success: true,
-        });
-        successfulCount++;
-      }
-    });
-
-    const restoredProgress: TranslationJobProgress = {
-      totalChunks: chunks.length,
-      processedChunks: successfulCount,
-      successfulChunks: successfulCount,
-      failedChunks: 0,
-      currentStatusMessage: '작업 복구 완료. 번역 시작을 눌러 이어하세요.',
-    };
-    restoreSession([restoredFile], restoredResults, restoredProgress);
-    addLog('info', `작업이 복구되었습니다. 총 ${chunks.length}개 중 ${successfulCount}개 완료됨.`);
-    
-    return { mode: snapshotMode };
-  }, [config, updateConfig, restoreSession, addLog, decodeBase64ToEpub]);
-  
-  /**
-   * 스냅샷(JSON 파일 또는 객체)을 불러와 작업 복구
-   */
-  const importSnapshot = useCallback(async (data: File | TranslationSnapshot): Promise<{ mode: string; epubChapters?: any[] } | void> => {
     try {
-      const snapshot: TranslationSnapshot = data instanceof File
-        ? JSON.parse(await data.text())
-        : data;
+      const epubBlob = await new EpubService().createEpubFromTextChunks({
+        title: project.title.trim(),
+        author: project.author.trim(),
+        description: project.description,
+        coverImageDataUrl: validation.coverImage,
+        // 무결성 모드 결과는 줄바꿈(\n)으로, 기본 모드 결과는 원문 개행을 그대로 담고 있다
+        chunks: completedResults.map((r) => ({ chunkIndex: r.chunkIndex, text: r.translatedText })),
+        glossaryTerms,
+        splitMode: config.epubSplitMode,
+        delimiterRegex: config.epubDelimiterRegex,
+        delimiterMinDistance: config.epubDelimiterMinDistance,
+      });
 
-      return await restoreFromSnapshotObject(snapshot);
-
+      const downloadName = filename || `${getOutputBaseName(inputFiles)}.epub`;
+      triggerDownload(epubBlob, downloadName);
+      addLog('info', `EPUB 전자책이 다운로드되었습니다: ${downloadName}`);
     } catch (error) {
-      addLog('error', `스냅샷 불러오기 실패: ${error}`);
-      console.error(error);
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(`EPUB 생성 실패: ${message}`, 'EPUB 내보내기');
     }
-  }, [addLog, restoreFromSnapshotObject]);
-
+  }, [results, inputFiles, glossaryEntries, config, addLog]);
 
   // 컴포넌트 언마운트 시 정리
   useEffect(() => {
@@ -720,11 +434,7 @@ export function useTranslation() {
     retryFailedChunks,
     retrySingleChunk, // [NEW]
     downloadResult,
-    
-    // 스냅샷 액션
-    createSnapshot, // [NEW]
-    exportSnapshot,
-    importSnapshot, // [MODIFIED]
+    downloadEpubResult,
     
     // 상태 확인
     canStart: inputFiles.length > 0 && !isRunning,

@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 생성물 (docs/worklog/entries에서 생성)
+docs/WORKLOG.md

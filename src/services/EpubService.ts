@@ -19,6 +19,22 @@ import {
   OPFManifestItem,
   OPFSpineItem,
 } from '../types/epub';
+import { splitTextByDelimiterChapters, type ExportGlossaryItem } from '../utils/epubExportUtils';
+
+/**
+ * 텍스트 번역본 EPUB 내보내기 옵션
+ */
+export interface TextEpubExportOptions {
+  title: string;
+  author: string;
+  description?: string;
+  coverImageDataUrl?: string;
+  chunks: Array<{ chunkIndex: number; text: string }>;
+  glossaryTerms?: ExportGlossaryItem[];
+  splitMode?: 'chunk' | 'delimiter';
+  delimiterRegex?: string;
+  delimiterMinDistance?: number;
+}
 
 export class EpubService {
   /**
@@ -557,6 +573,434 @@ export class EpubService {
 
     return text.replace(/[&<>"']/g, (char) => map[char]);
   }
+
+  /**
+   * 텍스트 번역본 청크와 프로젝트 정보로 EPUB 3 전자책(표지·소개·목차·본문·부록 용어집)을 만든다.
+   * 표지가 없으면 표지 항목 없이 만든다.
+   */
+  async createEpubFromTextChunks(options: TextEpubExportOptions): Promise<Blob> {
+    const {
+      title,
+      author,
+      description,
+      coverImageDataUrl,
+      chunks,
+      glossaryTerms = [],
+      splitMode = 'chunk',
+      delimiterRegex,
+      delimiterMinDistance,
+    } = options;
+
+    const zip = new JSZip();
+
+    // 1. mimetype (압축하지 않는 STORE 방식, 파일 맨 앞)
+    zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
+
+    // 2. META-INF/container.xml
+    zip.file(
+      'META-INF/container.xml',
+      `<?xml version="1.0" encoding="UTF-8"?>\n` +
+      `<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n` +
+      `  <rootfiles>\n` +
+      `    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>\n` +
+      `  </rootfiles>\n` +
+      `</container>`
+    );
+
+    // 3. 표지 이미지 처리
+    let coverFilename = 'cover.jpg';
+    let coverMimeType = 'image/jpeg';
+    let hasCover = false;
+    if (coverImageDataUrl) {
+      const match = coverImageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        coverMimeType = match[1];
+        const base64Data = match[2];
+        if (coverMimeType.includes('png')) coverFilename = 'cover.png';
+        else if (coverMimeType.includes('webp')) coverFilename = 'cover.webp';
+        else if (coverMimeType.includes('gif')) coverFilename = 'cover.gif';
+        zip.file(`OEBPS/images/${coverFilename}`, base64Data, { base64: true });
+        hasCover = true;
+      }
+    }
+
+    // 4. 스타일시트
+    const cssContent = `@charset "utf-8";
+body {
+  margin: 5%;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+  line-height: 1.8;
+  word-break: break-word;
+}
+h1.chapter-title, h2.chunk-title {
+  margin-top: 1.2em;
+  margin-bottom: 1.5em;
+  font-size: 1.4em;
+  font-weight: bold;
+  text-align: center;
+  border-bottom: 1px solid currentColor;
+  padding-bottom: 0.5em;
+}
+p {
+  margin-top: 0;
+  margin-bottom: 0.8em;
+  text-indent: 1em;
+}
+p.empty-line {
+  margin-bottom: 0.8em;
+  text-indent: 0;
+}
+.cover-wrapper {
+  margin: 0;
+  padding: 0;
+  text-align: center;
+}
+.cover-wrapper img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+.intro-content {
+  margin-top: 1.5em;
+}
+/* 목차 스타일: 브라우저/뷰어 기본 숫자 넘버링(1. 2. 3. ...) 제거 */
+nav#toc ul {
+  list-style: none;
+  list-style-type: none;
+  padding-left: 0;
+  margin-left: 0;
+}
+nav#toc li {
+  margin-bottom: 0.6em;
+  list-style: none;
+}
+/* 용어집 테이블 스타일: 다크 테마 호환을 위해 투명 배경 및 상속 글자색 유지 */
+.glossary-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1.5em;
+  font-size: 0.88em;
+  background: transparent;
+}
+.glossary-table th, .glossary-table td {
+  border: 1px solid currentColor;
+  padding: 8px 10px;
+  text-align: left;
+  background: transparent;
+}
+.glossary-table th {
+  font-weight: 600;
+}
+`;
+    zip.file('OEBPS/styles/style.css', cssContent);
+
+    // 5. 표지 XHTML (검은색 배경 제거, 뷰박스 및 리셋 적용, 상하 여백 왜곡 방지)
+    const coverXhtml = `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <title>Cover</title>
+  <style type="text/css">
+    @page { margin: 0; padding: 0; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      text-align: center;
+      background: transparent;
+    }
+    .cover-container {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .cover-container img {
+      max-width: 100%;
+      max-height: 100%;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      margin: auto;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="cover-container">
+    <img src="../images/${coverFilename}" alt="Cover Image"/>
+  </div>
+</body>
+</html>`;
+    if (hasCover) {
+      zip.file('OEBPS/text/cover.xhtml', coverXhtml);
+    }
+
+    // 6. 소개문 XHTML (소개문이 있다면 표지와 목차 사이에 소개문 삽입)
+    const hasIntro = Boolean(description && description.trim().length > 0);
+    if (hasIntro) {
+      const introParas = (description || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .map((line) => (line ? `<p>${this.escapeHtml(line)}</p>` : `<p class="empty-line">&#160;</p>`))
+        .join('\n      ');
+
+      const introXhtml = `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <title>작품 소개</title>
+  <link rel="stylesheet" type="text/css" href="../styles/style.css"/>
+</head>
+<body>
+  <h1 class="chapter-title">작품 소개</h1>
+  <div class="intro-content">
+      ${introParas}
+  </div>
+</body>
+</html>`;
+      zip.file('OEBPS/text/intro.xhtml', introXhtml);
+    }
+
+    // 7. 챕터 목록 생성 (청크 단위 또는 구분자 정규식 단위)
+    interface ExportChapterData {
+      filename: string;
+      title: string;
+      text: string;
+    }
+
+    const exportChapters: ExportChapterData[] = [];
+
+    if (splitMode === 'delimiter') {
+      const fullText = chunks.map((c) => c.text || '').join('\n');
+      const delimiterRule = delimiterRegex || '^[\\t \\u3000#]*(제\\s*\\d+\\s*[장화]).*$';
+      const minDistance = typeof delimiterMinDistance === 'number' ? delimiterMinDistance : 10;
+      const splitResults = splitTextByDelimiterChapters(fullText, delimiterRule, minDistance, title || '서두');
+
+      splitResults.forEach((ch, idx) => {
+        exportChapters.push({
+          filename: `chapter_${idx + 1}.xhtml`,
+          title: ch.title,
+          text: ch.text,
+        });
+      });
+    } else {
+      // 기본값: 청크 단위 분할
+      chunks.forEach((chunk, i) => {
+        exportChapters.push({
+          filename: `chunk_${i + 1}.xhtml`,
+          title: `chunk ${chunk.chunkIndex + 1}`,
+          text: chunk.text || '',
+        });
+      });
+    }
+
+    // 각 챕터별 본문 XHTML 기록
+    for (let i = 0; i < exportChapters.length; i++) {
+      const ch = exportChapters[i];
+      const paras = (ch.text || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .map((line) => (line ? `<p>${this.escapeHtml(line)}</p>` : `<p class="empty-line">&#160;</p>`))
+        .join('\n      ');
+
+      const chapterXhtml = `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <title>${this.escapeHtml(ch.title)}</title>
+  <link rel="stylesheet" type="text/css" href="../styles/style.css"/>
+</head>
+<body>
+  <h2 class="chunk-title">${this.escapeHtml(ch.title)}</h2>
+  <div class="chapter-content">
+      ${paras}
+  </div>
+</body>
+</html>`;
+      zip.file(`OEBPS/text/${ch.filename}`, chapterXhtml);
+    }
+
+    // 8. 맨 마지막 부록 용어집 (Glossary) XHTML (translated, category, term 순)
+    const hasGlossary = glossaryTerms.length > 0;
+    if (hasGlossary) {
+      const tableRows = glossaryTerms
+        .map((item) => `      <tr>
+        <td>${this.escapeHtml(item.translated)}</td>
+        <td>${this.escapeHtml(item.category || '-')}</td>
+        <td>${this.escapeHtml(item.term)}</td>
+      </tr>`)
+        .join('\n');
+
+      const glossaryXhtml = `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <title>부록: 용어집</title>
+  <link rel="stylesheet" type="text/css" href="../styles/style.css"/>
+</head>
+<body>
+  <h2 class="chunk-title">부록: 용어집</h2>
+  <table class="glossary-table">
+    <thead>
+      <tr>
+        <th style="width: 40%;">번역어</th>
+        <th style="width: 25%;">분류</th>
+        <th style="width: 35%;">원문</th>
+      </tr>
+    </thead>
+    <tbody>
+${tableRows}
+    </tbody>
+  </table>
+</body>
+</html>`;
+      zip.file('OEBPS/text/glossary.xhtml', glossaryXhtml);
+    }
+
+    // 9. EPUB 3 Navigation Document (OEBPS/text/nav.xhtml)
+    const navItems: string[] = [];
+    if (hasIntro) {
+      navItems.push(`        <li><a href="intro.xhtml">작품 소개</a></li>`);
+    }
+    for (let i = 0; i < exportChapters.length; i++) {
+      const ch = exportChapters[i];
+      navItems.push(`        <li><a href="${ch.filename}">${this.escapeHtml(ch.title)}</a></li>`);
+    }
+    if (hasGlossary) {
+      navItems.push(`        <li><a href="glossary.xhtml">부록: 용어집</a></li>`);
+    }
+
+    const navXhtml = `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <title>목차</title>
+  <link rel="stylesheet" type="text/css" href="../styles/style.css"/>
+</head>
+<body>
+  <nav epub:type="toc" id="toc">
+    <h1 class="chapter-title">목차</h1>
+    <ul>
+${navItems.join('\n')}
+    </ul>
+  </nav>
+</body>
+</html>`;
+      zip.file('OEBPS/text/nav.xhtml', navXhtml);
+
+    // 10. EPUB 2 NCX (OEBPS/toc.ncx)
+    let playOrder = 1;
+    const ncxPoints: string[] = [];
+    if (hasIntro) {
+      ncxPoints.push(`    <navPoint id="navPoint-${playOrder}" playOrder="${playOrder}">
+      <navLabel><text>작품 소개</text></navLabel>
+      <content src="text/intro.xhtml"/>
+    </navPoint>`);
+      playOrder++;
+    }
+    for (let i = 0; i < exportChapters.length; i++) {
+      const ch = exportChapters[i];
+      ncxPoints.push(`    <navPoint id="navPoint-${playOrder}" playOrder="${playOrder}">
+      <navLabel><text>${this.escapeHtml(ch.title)}</text></navLabel>
+      <content src="text/${ch.filename}"/>
+    </navPoint>`);
+      playOrder++;
+    }
+    if (hasGlossary) {
+      ncxPoints.push(`    <navPoint id="navPoint-${playOrder}" playOrder="${playOrder}">
+      <navLabel><text>부록: 용어집</text></navLabel>
+      <content src="text/glossary.xhtml"/>
+    </navPoint>`);
+      playOrder++;
+    }
+
+    const bookUuid = 'urn:uuid:' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'btg-' + Date.now());
+    const ncxContent = `<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head>
+    <meta name="dtb:uid" content="${bookUuid}"/>
+    <meta name="dtb:depth" content="1"/>
+    <meta name="dtb:totalPageCount" content="0"/>
+    <meta name="dtb:maxPageNumber" content="0"/>
+  </head>
+  <docTitle>
+    <text>${this.escapeHtml(title)}</text>
+  </docTitle>
+  <docAuthor>
+    <text>${this.escapeHtml(author)}</text>
+  </docAuthor>
+  <navMap>
+${ncxPoints.join('\n')}
+  </navMap>
+</ncx>`;
+    zip.file('OEBPS/toc.ncx', ncxContent);
+
+    // 11. OPF 패키지 (OEBPS/content.opf)
+    const modifiedDate = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+    const getChapterItemId = (i: number) => (splitMode === 'delimiter' ? `chapter-${i + 1}` : `chunk-${i + 1}`);
+    const manifestItems: string[] = [
+      ...(hasCover
+        ? [
+            `    <item id="cover-image" href="images/${coverFilename}" media-type="${coverMimeType}" properties="cover-image"/>`,
+            `    <item id="cover-page" href="text/cover.xhtml" media-type="application/xhtml+xml"/>`,
+          ]
+        : []),
+      ...(hasIntro ? [`    <item id="intro-page" href="text/intro.xhtml" media-type="application/xhtml+xml"/>`] : []),
+      `    <item id="nav" href="text/nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`,
+      `    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>`,
+      `    <item id="style" href="styles/style.css" media-type="text/css"/>`,
+      ...exportChapters.map((ch, i) => `    <item id="${getChapterItemId(i)}" href="text/${ch.filename}" media-type="application/xhtml+xml"/>`),
+      ...(hasGlossary ? [`    <item id="glossary-page" href="text/glossary.xhtml" media-type="application/xhtml+xml"/>`] : []),
+    ];
+
+    const spineItemrefs: string[] = [
+      ...(hasCover ? [`    <itemref idref="cover-page" linear="no"/>`] : []),
+      ...(hasIntro ? [`    <itemref idref="intro-page"/>`] : []),
+      `    <itemref idref="nav"/>`,
+      ...exportChapters.map((_, i) => `    <itemref idref="${getChapterItemId(i)}"/>`),
+      ...(hasGlossary ? [`    <itemref idref="glossary-page"/>`] : []),
+    ];
+
+    const opfContent = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId" page-progression-direction="ltr">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>${this.escapeHtml(title)}</dc:title>
+    <dc:creator>${this.escapeHtml(author)}</dc:creator>
+    <dc:language>ko</dc:language>
+    <dc:identifier id="BookId">${bookUuid}</dc:identifier>
+    <meta property="dcterms:modified">${modifiedDate}</meta>
+${hasCover ? '    <meta name="cover" content="cover-image"/>\n' : ''}  </metadata>
+  <manifest>
+${manifestItems.join('\n')}
+  </manifest>
+  <spine toc="ncx">
+${spineItemrefs.join('\n')}
+  </spine>
+</package>`;
+    zip.file('OEBPS/content.opf', opfContent);
+
+    // 12. 최종 EPUB Blob 생성
+    return await zip.generateAsync({
+      type: 'blob',
+      mimeType: 'application/epub+zip',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 9 },
+    });
+  }
+
 }
 
 // 싱글톤 인스턴스 export

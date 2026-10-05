@@ -1,8 +1,8 @@
 // stores/glossaryStore.ts
 // 용어집 추출 및 관리 상태 (Zustand)
+// 용어집은 브라우저 저장소에 따로 남기지 않고 스냅샷에 함께 저장한다.
 
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import type { GlossaryEntry, GlossaryExtractionProgress } from '../types/dtos';
 
 /**
@@ -81,7 +81,6 @@ const initialState = {
  * 용어집 스토어
  */
 export const useGlossaryStore = create<GlossaryState>()(
-  persist(
     (set, get) => ({
       // 초기 상태
       ...initialState,
@@ -326,12 +325,7 @@ export const useGlossaryStore = create<GlossaryState>()(
         
         return sorted;
       },
-    }),
-    {
-      name: 'btg-glossary', // LocalStorage 키
-      partialize: (state) => ({ entries: state.entries }), // entries만 저장
-    }
-  )
+    })
 );
 
 /**

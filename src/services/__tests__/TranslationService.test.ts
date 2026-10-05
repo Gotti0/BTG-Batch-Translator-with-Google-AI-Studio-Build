@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TranslationService } from '../TranslationService';
-import type { AppConfig } from '../../types/config';
+import { defaultConfig as appDefaultConfig, type AppConfig } from '../../types/config';
 import type { TranslationContext } from '../../types/dtos';
 
 // Mock 변수들을 vi.hoisted로 감싸서 호이스팅 이슈 방지
@@ -23,6 +23,11 @@ vi.mock('../GeminiClient', () => {
   (MockGeminiClient as any).isRateLimitError = vi.fn().mockReturnValue(false);
   (MockGeminiClient as any).isContentSafetyError = vi.fn().mockReturnValue(false);
   (MockGeminiClient as any).isQuotaError = vi.fn().mockReturnValue(false);
+  (MockGeminiClient as any).getRateLimitDetails = vi.fn().mockReturnValue({
+    limitType: 'RPM',
+    limitTypeName: '분당 요청 수 제한 (RPM)',
+    formattedSummary: '분당 요청 수 제한 (RPM) | 한도: 10회/분',
+  });
 
   return {
     GeminiClient: MockGeminiClient,
@@ -35,6 +40,7 @@ vi.mock('../GeminiClient', () => {
 describe('TranslationService Pipelines', () => {
   let service: TranslationService;
   const defaultConfig: AppConfig = {
+    ...appDefaultConfig,
     modelName: 'gemini-pro',
     temperature: 0.7,
     requestsPerMinute: 10,
@@ -114,6 +120,40 @@ describe('TranslationService Pipelines', () => {
       const prompt = lastCall[0];
       expect(prompt).toContain('Apple');
       expect(prompt).toContain('사과');
+    });
+  });
+
+  describe('429 마무리 중단', () => {
+    it('429가 나면 새 청크는 보내지 않고 이미 보낸 청크의 결과는 살린다', async () => {
+      const { GeminiClient } = await import('../GeminiClient');
+      const rateLimitError = new Error('429 RESOURCE_EXHAUSTED');
+      (GeminiClient as any).isRateLimitError.mockImplementation((e: Error) => e === rateLimitError);
+
+      const drainService = new TranslationService(
+        { ...defaultConfig, chunkSize: 10, maxWorkers: 2, requestsPerMinute: 0 },
+        'fake-api-key'
+      );
+      const onRateLimit = vi.fn();
+      drainService.setRateLimitCallback(onRateLimit);
+
+      mockGenerateText
+        .mockImplementationOnce(() => Promise.reject(rateLimitError))
+        .mockImplementationOnce(() => new Promise((resolve) => setTimeout(() => resolve('두번째 번역'), 20)))
+        .mockImplementation(() => Promise.resolve('보내면 안 되는 요청'));
+
+      try {
+        const results = await drainService.translateText('aaaaaaaa\nbbbbbbbb\ncccccccc\n', context);
+
+        expect(mockGenerateText).toHaveBeenCalledTimes(2);
+        expect(onRateLimit).toHaveBeenCalledTimes(1);
+        expect(results).toHaveLength(2);
+        expect(results[0].success).toBe(false);
+        expect(results[0].error).toContain('429');
+        expect(results[1]).toMatchObject({ chunkIndex: 1, success: true, translatedText: '두번째 번역' });
+      } finally {
+        (GeminiClient as any).isRateLimitError.mockReturnValue(false);
+        (GeminiClient as any).isRateLimitError.mockImplementation(undefined);
+      }
     });
   });
 
