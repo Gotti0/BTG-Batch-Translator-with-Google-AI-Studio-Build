@@ -14,11 +14,6 @@ export {
   type GenerationConfig,
   type ChatMessage,
 } from './GeminiClient';
-export {
-  connectLiveSession,
-  type LiveSession,
-  type LiveSessionOptions,
-} from './GeminiLiveClient';
 export { 
   TranslationService,
   type ProgressCallback,
