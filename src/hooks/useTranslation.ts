@@ -427,6 +427,7 @@ export function useTranslation() {
     progress,
     results,
     translatedText,
+    translationMode,
     
     // 액션
     executeTranslation,

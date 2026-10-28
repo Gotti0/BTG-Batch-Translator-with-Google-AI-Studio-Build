@@ -1,14 +1,13 @@
 // services/GeminiClient.ts
-// 새로운 @google/genai SDK를 사용한 Gemini API 클라이언트
-// Gemini 2.0과 함께 출시된 통합 클라이언트 구조 적용
+// 서버 API 엔드포인트를 통해 Gemini 모델을 호출하는 클라이언트
 
-import { GoogleGenAI, MediaResolution } from '@google/genai';
 import { generateUltraCompactPdf, uint8ArrayToBase64, downloadPdfBlob } from '../utils/pdfGenerator';
+
+const MEDIA_RESOLUTION_LOW = 'MEDIA_RESOLUTION_LOW';
 
 /**
  * 기본 안전 설정 (모두 허용)
  * 소설 번역 등 창작물 작업 시 문맥상 필요한 표현이 차단되는 것을 방지합니다.
- * @note SDK의 SafetySetting 타입과 호환되도록 any로 캐스팅합니다.
  */
 const DEFAULT_SAFETY_SETTINGS: any = [
   { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
@@ -476,17 +475,9 @@ function classifyError(error: Error): GeminiApiException {
 }
 
 /**
- * Gemini API 클라이언트 (새로운 @google/genai SDK 사용)
- * 
- * 변경 사항:
- * - GoogleGenerativeAI → GoogleGenAI (통합 클라이언트)
- * - model.generateContent() → client.models.generateContent()
- * - model.startChat() → client.chats.create()
- * - 모델명은 인스턴스화 시점이 아닌 요청 시점에 전달
+ * 서버 엔드포인트를 통해 Gemini API를 호출하는 클라이언트
  */
 export class GeminiClient {
-  private client: GoogleGenAI;
-  
   // RPM 제어
   private requestsPerMinute: number;
   private delayBetweenRequests: number;
@@ -495,24 +486,39 @@ export class GeminiClient {
   /**
    * GeminiClient 생성자
    * 
-   * @param apiKey - API 키 (AI Studio Builder에서는 자동 프록시됨)
+   * @param _apiKey - 레거시 호환용 파라미터 (서버 측에서 키를 관리하므로 사용하지 않음)
    * @param requestsPerMinute - 분당 요청 수 제한 (기본값: 10)
    */
-  constructor(apiKey?: string, requestsPerMinute: number = 10) {
-    // AI Studio Builder에서는 API 키가 자동으로 프록시됨
-    const key = apiKey || (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) || '';
-    
-    if (!key) {
-      console.warn('API 키가 제공되지 않았습니다. AI Studio Builder 환경에서 자동 프록시를 기대합니다.');
-    }
-    
-    // 새로운 통합 클라이언트 생성
-    this.client = new GoogleGenAI({ apiKey: key });
-    
+  constructor(_apiKey?: string, requestsPerMinute: number = 10) {
     this.requestsPerMinute = requestsPerMinute;
     this.delayBetweenRequests = requestsPerMinute > 0 ? 60000 / requestsPerMinute : 0;
-    
-    console.log(`GeminiClient 초기화 완료 (GenAI SDK). RPM: ${requestsPerMinute}`);
+
+    console.log(`GeminiClient 초기화 완료 (Server Proxy). RPM: ${requestsPerMinute}`);
+  }
+
+  /**
+   * 서버 엔드포인트 POST 호출 헬퍼
+   */
+  private async postApi(endpoint: string, payload: Record<string, any>): Promise<any> {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const errMessage = data?.error?.message || `HTTP Error ${response.status}`;
+      const err = new Error(errMessage) as any;
+      err.status = data?.error?.status || response.status;
+      if (data?.error?.details) {
+        err.details = data.error.details;
+      }
+      throw err;
+    }
+
+    return data;
   }
 
   /**
@@ -552,7 +558,6 @@ export class GeminiClient {
     return undefined;
   }
 
-
   /**
    * 대기 유틸리티
    */
@@ -561,7 +566,7 @@ export class GeminiClient {
   }
 
   /**
-   * 텍스트 생성 (새로운 SDK 방식)
+   * 텍스트 생성
    * 
    * @param prompt - 프롬프트 텍스트
    * @param modelName - 모델 이름 (기본값: gemini-2.0-flash)
@@ -584,9 +589,7 @@ export class GeminiClient {
     const effectiveSystemInstruction = pdfRequest ? pdfRequest.systemInstruction : systemInstruction;
 
     try {
-      // 새로운 SDK: client.models.generateContent() 사용
-      // 모델명은 요청 시점에 전달
-      const response = await this.client.models.generateContent({
+      const response = await this.postApi('/api/gemini/generate-content', {
         model: modelName,
         contents: pdfRequest ? pdfRequest.contents : prompt,
         config: {
@@ -600,11 +603,10 @@ export class GeminiClient {
           ...(effectiveSystemInstruction && { systemInstruction: effectiveSystemInstruction }),
           safetySettings: DEFAULT_SAFETY_SETTINGS,
           ...(thinkingConfig && { thinkingConfig }),
-          ...(pdfRequest && { mediaResolution: MediaResolution.MEDIA_RESOLUTION_LOW }),
+          ...(pdfRequest && { mediaResolution: MEDIA_RESOLUTION_LOW }),
         },
       });
 
-      // 응답에서 텍스트 추출
       const text = response.text;
       
       if (!text && prompt.trim()) {
@@ -647,7 +649,7 @@ export class GeminiClient {
       }
       base64Image = btoa(base64Image);
 
-      const response = await this.client.models.generateContent({
+      const response = await this.postApi('/api/gemini/generate-content', {
         model: modelName,
         contents: [
           {
@@ -664,8 +666,7 @@ export class GeminiClient {
           },
         ],
         config: {
-          temperature: 0.4, // 설명은 사실적이어야 하므로 낮게 설정
-          // [중요] 안전 설정: BLOCK_NONE 적용
+          temperature: 0.4,
           safetySettings: DEFAULT_SAFETY_SETTINGS,
         },
       });
@@ -688,10 +689,6 @@ export class GeminiClient {
 
   /**
    * 채팅 세션을 사용한 텍스트 생성 (다중 치환 지원)
-   * * [변경 사항]
-   * 1. config.substitutionData가 있으면 히스토리 내의 해당 키들을 값으로 모두 치환합니다.
-   * 2. 기본적으로 prompt 인자는 '{{slot}}'의 값으로 사용됩니다 (substitutionData에 명시되지 않은 경우).
-   * 3. 히스토리의 마지막 User 메시지를 트리거로 사용합니다.
    * 
    * @param prompt - 현재 프롬프트
    * @param systemInstruction - 시스템 지침
@@ -756,7 +753,7 @@ export class GeminiClient {
       // 5-a. PDF 입력: 채팅 세션 대신 히스토리를 contents로 펼쳐 한 번에 보낸다
       if (config?.pdfInput?.enabled) {
         const pdfRequest = buildPdfRequest(messageToSend, systemInstruction, chatHistory, config.pdfInput);
-        const pdfResponse = await this.client.models.generateContent({
+        const pdfResponse = await this.postApi('/api/gemini/generate-content', {
           model: modelName,
           contents: pdfRequest.contents,
           config: {
@@ -769,7 +766,7 @@ export class GeminiClient {
             responseSchema: config?.responseJsonSchema,
             safetySettings: DEFAULT_SAFETY_SETTINGS,
             ...(thinkingConfig && { thinkingConfig }),
-            mediaResolution: MediaResolution.MEDIA_RESOLUTION_LOW,
+            mediaResolution: MEDIA_RESOLUTION_LOW,
           },
         });
         const pdfText = pdfResponse.text;
@@ -779,8 +776,8 @@ export class GeminiClient {
         return pdfText || '';
       }
 
-      // 5. 채팅 세션 생성
-      const chat = this.client.chats.create({
+      // 5. 채팅 세션 호출
+      const response = await this.postApi('/api/gemini/generate-chat', {
         model: modelName,
         config: {
           temperature: config?.temperature ?? 0.7,
@@ -791,15 +788,15 @@ export class GeminiClient {
           responseMimeType: config?.responseMimeType,
           responseSchema: config?.responseJsonSchema,
           safetySettings: DEFAULT_SAFETY_SETTINGS,
-          ...(thinkingConfig && { thinkingConfig }), 
+          ...(thinkingConfig && { thinkingConfig }),
         },
         history: chatHistory.map(msg => ({
           role: msg.role,
           parts: [{ text: msg.content }],
         })),
+        message: messageToSend,
       });
 
-      const response = await chat.sendMessage({ message: messageToSend });
       const text = response.text;
       
       if (!text && messageToSend.trim()) {
@@ -838,29 +835,72 @@ export class GeminiClient {
     const thinkingConfig = this.getThinkingConfig(modelName, config);
 
     try {
-      // 새로운 SDK: generateContentStream 사용
-      const stream = await this.client.models.generateContentStream({
-        model: modelName,
-        contents: prompt,
-        config: {
-          temperature: config?.temperature ?? 0.7,
-          topP: config?.topP ?? 0.9,
-          topK: config?.topK ?? 40,
-          maxOutputTokens: config?.maxOutputTokens ?? 65536,
-          ...(systemInstruction && { systemInstruction }),
-          safetySettings: DEFAULT_SAFETY_SETTINGS,
-          ...(thinkingConfig && { thinkingConfig }), 
-        },
+      const response = await fetch('/api/gemini/generate-content-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: modelName,
+          contents: prompt,
+          config: {
+            temperature: config?.temperature ?? 0.7,
+            topP: config?.topP ?? 0.9,
+            topK: config?.topK ?? 40,
+            maxOutputTokens: config?.maxOutputTokens ?? 65536,
+            ...(systemInstruction && { systemInstruction }),
+            safetySettings: DEFAULT_SAFETY_SETTINGS,
+            ...(thinkingConfig && { thinkingConfig }),
+          },
+        }),
       });
 
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        const errMessage = data?.error?.message || `HTTP Error ${response.status}`;
+        const err = new Error(errMessage) as any;
+        err.status = data?.error?.status || response.status;
+        if (data?.error?.details) {
+          err.details = data.error.details;
+        }
+        throw err;
+      }
+
+      if (!response.body) {
+        throw new Error('스트리밍 응답 본문이 없습니다.');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
       let fullText = '';
-      
-      // 스트림 청크 처리
-      for await (const chunk of stream) {
-        const chunkText = chunk.text || '';
-        fullText += chunkText;
-        if (onChunk) {
-          onChunk(chunkText);
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payloadStr = trimmed.slice(5).trim();
+          if (!payloadStr) continue;
+
+          const parsed = JSON.parse(payloadStr);
+          if (parsed.error) {
+            const err = new Error(parsed.error.message || 'Streaming error') as any;
+            err.status = parsed.error.status;
+            err.details = parsed.error.details;
+            throw err;
+          }
+          if (parsed.done) {
+            break;
+          }
+          if (typeof parsed.text === 'string') {
+            fullText += parsed.text;
+            onChunk?.(parsed.text);
+          }
         }
       }
 
@@ -897,29 +937,13 @@ export class GeminiClient {
    */
   private async listModelNames(predicate: (name: string) => boolean): Promise<string[]> {
     try {
-      const response = await this.client.models.list();
-      const models: string[] = [];
-      let modelList: any[] = [];
-
-      if (response && typeof response === 'object') {
-        if (Array.isArray(response)) {
-          modelList = response;
-        } else if ('models' in response && Array.isArray((response as any).models)) {
-          modelList = (response as any).models;
-        } else if (Symbol.asyncIterator in response) {
-          for await (const model of (response as any)) {
-            modelList.push(model);
-          }
-        }
+      const response = await fetch('/api/gemini/models');
+      if (!response.ok) {
+        return [];
       }
-
-      for (const model of modelList) {
-        const name = typeof model?.name === 'string' ? model.name.replace(/^models\//, '') : '';
-        if (name && predicate(name)) {
-          models.push(name);
-        }
-      }
-      return models;
+      const data = await response.json();
+      const modelList: string[] = Array.isArray(data?.models) ? data.models : [];
+      return modelList.filter((name) => typeof name === 'string' && predicate(name));
     } catch (error) {
       console.error('모델 목록 조회 실패:', error);
       return [];
@@ -967,7 +991,7 @@ export class GeminiClient {
     };
 
     const callApi = async (responseModalities: string[]) =>
-      this.client.models.generateContent({
+      this.postApi('/api/gemini/generate-content', {
         model: params.model,
         contents: [{ role: 'user', parts }],
         config: { ...baseConfig, responseModalities },

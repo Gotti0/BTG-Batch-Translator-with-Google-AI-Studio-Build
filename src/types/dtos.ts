@@ -40,6 +40,11 @@ export interface TranslationJobProgress {
 }
 
 /**
+ * 번역 모드 (기본, 무결성)
+ */
+export type TranslationMode = 'basic' | 'integrity';
+
+/**
  * 용어집 항목
  */
 export interface GlossaryEntry {

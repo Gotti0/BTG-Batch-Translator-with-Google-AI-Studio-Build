@@ -8,6 +8,7 @@ import type {
   FileContent,
   LogEntry,
   GlossaryEntry,
+  TranslationMode,
 } from '../types/dtos';
 
 /**
@@ -34,8 +35,8 @@ interface TranslationState {
   translatedText: string;
 
   // === 번역 모드 ===
-  translationMode: 'basic' | 'integrity';
-  setTranslationMode: (mode: 'basic' | 'integrity') => void;
+  translationMode: TranslationMode;
+  setTranslationMode: (mode: TranslationMode) => void;
   
   // === 파일 관련 액션 ===
   setInputFiles: (files: FileContent[]) => void;
@@ -92,7 +93,7 @@ const initialState = {
   glossaryEntries: [],
   logs: [],
   translatedText: '',
-  translationMode: 'basic' as const,
+  translationMode: 'basic' as TranslationMode,
 };
 
 /**

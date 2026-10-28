@@ -24,7 +24,7 @@ import type {
   TranslationResult,
   TranslationJobProgress,
   LogEntry,
-  TranslationContext
+  TranslationContext,
 } from '../types/dtos';
 import type { AppConfig, PrefillHistoryItem } from '../types/config';
 import type { EpubNode, EpubChapter } from '../types/epub';

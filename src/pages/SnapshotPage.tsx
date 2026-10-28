@@ -250,7 +250,11 @@ export function SnapshotPage({ isActive, onRestored }: SnapshotPageProps) {
                     {meta.fileName || '파일 없음'}
                   </span>
                   <span>
-                    {meta.mode === 'epub' ? 'EPUB' : meta.translationMode === 'integrity' ? '텍스트 · 무결성' : '텍스트 · 기본'}
+                    {meta.mode === 'epub'
+                      ? 'EPUB'
+                      : meta.translationMode === 'integrity'
+                        ? '텍스트 · 무결성'
+                        : '텍스트 · 기본'}
                   </span>
                   <span>원문 {meta.totalChars.toLocaleString()}자</span>
                   <span>약 {formatBytes(meta.approxBytes)}</span>

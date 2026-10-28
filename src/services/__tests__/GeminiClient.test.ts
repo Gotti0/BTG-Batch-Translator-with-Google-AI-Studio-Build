@@ -1,15 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
-
-const { mockGenerateContent } = vi.hoisted(() => ({
-  mockGenerateContent: vi.fn(),
-}));
-
-vi.mock('@google/genai', () => ({
-  GoogleGenAI: vi.fn().mockImplementation(function (this: any) {
-    this.models = { generateContent: mockGenerateContent };
-  }),
-  MediaResolution: { MEDIA_RESOLUTION_LOW: 'MEDIA_RESOLUTION_LOW' },
-}));
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import {
   GeminiClient,
@@ -76,6 +65,10 @@ describe('PDF 입력', () => {
     { role: 'model' as const, content: '예시 답변' },
   ];
 
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('standard 모드는 본문만 PDF로 보내고 시스템 지침과 히스토리는 텍스트로 둔다', () => {
     const req = buildPdfRequest('번역할 본문', '시스템 지침', history, { enabled: true, mode: 'standard' });
 
@@ -95,7 +88,12 @@ describe('PDF 입력', () => {
   });
 
   it('PDF 입력을 켜면 generateText가 MEDIA_RESOLUTION_LOW로 PDF를 보낸다', async () => {
-    mockGenerateContent.mockResolvedValueOnce({ text: '번역 결과' });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ text: '번역 결과' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
     const client = new GeminiClient('test-key', 0);
 
     const text = await client.generateText('본문', 'gemini-2.5-flash', '지침', {
@@ -103,7 +101,11 @@ describe('PDF 입력', () => {
     });
 
     expect(text).toBe('번역 결과');
-    const request = mockGenerateContent.mock.calls.at(-1)![0];
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/gemini/generate-content',
+      expect.objectContaining({ method: 'POST' })
+    );
+    const request = JSON.parse(fetchSpy.mock.calls.at(-1)![1]?.body as string);
     expect(request.config.mediaResolution).toBe('MEDIA_RESOLUTION_LOW');
     expect(request.contents[0].parts[0].inlineData.mimeType).toBe('application/pdf');
   });
@@ -111,7 +113,17 @@ describe('PDF 입력', () => {
 
 describe('GeminiClient 오류 분류', () => {
   it("본문에 'limit: 1500'이 있어도 콘텐츠 안전이 아니라 Rate Limit으로 분류한다", async () => {
-    mockGenerateContent.mockRejectedValueOnce(new Error(`got status: 429. ${RPD_429_BODY}`));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          error: {
+            status: 429,
+            message: `got status: 429. ${RPD_429_BODY}`,
+          },
+        }),
+        { status: 429, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
     const client = new GeminiClient('test-key', 0);
 
     const error = await client.generateText('원문', 'gemini-2.5-flash').catch((e) => e);

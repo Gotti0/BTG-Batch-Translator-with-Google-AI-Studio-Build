@@ -358,10 +358,11 @@ function TranslationSettings({ mode }: { mode: 'text' | 'epub' }) {
         console.error('모델 목록 불러오기 실패:', error);
         // 실패 시 기본 목록 제공
         setModelOptions([
-          { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
-          { value: 'gemini-2.0-flash-lite-preview-02-05', label: 'Gemini 2.0 Flash Lite' },
-          { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
-          { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
+          { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+          { value: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+          { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
+          { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
+          { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
         ]);
       } finally {
         setIsLoadingModels(false);
@@ -414,7 +415,7 @@ function TranslationSettings({ mode }: { mode: 'text' | 'epub' }) {
               step={1000}
               helperText="한 번에 번역할 최대 글자 수입니다. 문맥 유지를 위해 적절한 크기를 설정하세요."
             />
-            {translationMode === 'integrity' && (
+            {(translationMode === 'integrity' || translationMode === 'batch_integrity') && (
               <div className="mt-4">
                 <Input
                   type="number"
@@ -1080,44 +1081,66 @@ export function TranslationPage() {
         </div>
 
         {mode === 'text' && (
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <label className="flex items-start gap-3 p-3 border rounded-lg cursor-pointer hover:border-blue-400 transition-colors">
-              <input
-                type="radio"
-                name="translation-quality-mode"
-                value="basic"
-                checked={translationMode === 'basic'}
-                onChange={() => setTranslationMode('basic')}
-                className="mt-1 w-4 h-4 accent-blue-600"
-              />
-              <div>
-                <div className="flex items-center gap-2 text-gray-800 font-semibold">
-                  🏃 기본 모드 (자유 번역)
+          <div className="mt-4 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* 1. 기본 모드 (실시간 자유 번역) */}
+              <label className={`flex items-start gap-3 p-3.5 border-2 rounded-xl cursor-pointer transition-all ${
+                translationMode === 'basic' 
+                  ? 'border-blue-500 bg-blue-50/40 shadow-sm' 
+                  : 'border-gray-200 hover:border-gray-300 bg-white'
+              }`}>
+                <input
+                  type="radio"
+                  name="translation-quality-mode"
+                  value="basic"
+                  checked={translationMode === 'basic'}
+                  onChange={() => setTranslationMode('basic')}
+                  className="mt-1 w-4 h-4 accent-blue-600"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-1 flex-wrap">
+                    <span className="font-bold text-gray-900 text-sm">
+                      🏃 기본 모드 (실시간 자유 번역)
+                    </span>
+                    <span className="text-[11px] font-semibold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
+                      실시간
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1 leading-relaxed">
+                    자연스러운 표현 중심. 극대화된 유창성으로 빠른 실시간 스트리밍 번역에 권장됩니다.
+                  </p>
                 </div>
-                <p className="text-sm text-gray-600">
-                  자연스러운 표현 중심. 극대화된 유창성, 약간의 축약 가능성.
-                </p>
-              </div>
-            </label>
+              </label>
 
-            <label className="flex items-start gap-3 p-3 border rounded-lg cursor-pointer hover:border-blue-400 transition-colors">
-              <input
-                type="radio"
-                name="translation-quality-mode"
-                value="integrity"
-                checked={translationMode === 'integrity'}
-                onChange={() => setTranslationMode('integrity')}
-                className="mt-1 w-4 h-4 accent-blue-600"
-              />
-              <div>
-                <div className="flex items-center gap-2 text-gray-800 font-semibold">
-                  🔒 무결성 모드 (줄 단위)
+              {/* 2. 무결성 모드 (실시간 줄 단위) */}
+              <label className={`flex items-start gap-3 p-3.5 border-2 rounded-xl cursor-pointer transition-all ${
+                translationMode === 'integrity' 
+                  ? 'border-blue-500 bg-blue-50/40 shadow-sm' 
+                  : 'border-gray-200 hover:border-gray-300 bg-white'
+              }`}>
+                <input
+                  type="radio"
+                  name="translation-quality-mode"
+                  value="integrity"
+                  checked={translationMode === 'integrity'}
+                  onChange={() => setTranslationMode('integrity')}
+                  className="mt-1 w-4 h-4 accent-blue-600"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-1 flex-wrap">
+                    <span className="font-bold text-gray-900 text-sm">
+                      🔒 무결성 모드 (실시간 줄 단위)
+                    </span>
+                    <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                      줄 단위 보존
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1 leading-relaxed">
+                    줄 단위 노드로 원문 구조를 1:1 보존하고 누락을 철저히 차단합니다.
+                  </p>
                 </div>
-                <p className="text-sm text-gray-600">
-                  줄 단위 노드로 구조를 보존하고 누락을 차단합니다. 법률/기술 문서에 권장.
-                </p>
-              </div>
-            </label>
+              </label>
+            </div>
           </div>
         )}
 
