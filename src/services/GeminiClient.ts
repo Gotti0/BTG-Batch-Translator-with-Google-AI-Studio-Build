@@ -1,20 +1,20 @@
 // services/GeminiClient.ts
-// Python infrastructure/gemini_client.py 의 TypeScript 변환
-// @google/genai SDK 사용
+// 서버 API 엔드포인트를 통해 Gemini 모델을 호출하는 클라이언트
 
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold, MediaResolution } from '@google/genai';
 import { generateUltraCompactPdf, uint8ArrayToBase64, downloadPdfBlob } from '../utils/pdfGenerator';
+
+const MEDIA_RESOLUTION_LOW = 'MEDIA_RESOLUTION_LOW';
 
 /**
  * 기본 안전 설정 (모두 허용)
  * 소설 번역 등 창작물 작업 시 문맥상 필요한 표현이 차단되는 것을 방지합니다.
  */
 const DEFAULT_SAFETY_SETTINGS: any = [
-  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
 ];
 
 /**
@@ -475,11 +475,9 @@ function classifyError(error: Error): GeminiApiException {
 }
 
 /**
- * @google/genai SDK를 사용한 Gemini API 클라이언트
+ * 서버 엔드포인트를 통해 Gemini API를 호출하는 클라이언트
  */
 export class GeminiClient {
-  private ai: GoogleGenAI;
-  
   // RPM 제어
   private requestsPerMinute: number;
   private delayBetweenRequests: number;
@@ -488,22 +486,39 @@ export class GeminiClient {
   /**
    * GeminiClient 생성자
    * 
-   * @param apiKey - API 키 (선택: 미지정 시 process.env.API_KEY 사용)
+   * @param _apiKey - 레거시 호환용 파라미터 (서버 측에서 키를 관리하므로 사용하지 않음)
    * @param requestsPerMinute - 분당 요청 수 제한 (기본값: 10)
    */
-  constructor(apiKey?: string, requestsPerMinute: number = 10) {
-    const effectiveKey = apiKey || process.env.API_KEY || process.env.GEMINI_API_KEY;
-    
-    if (!effectiveKey) {
-      console.warn('GeminiClient: API 키가 설정되지 않았습니다. 환경변수 API_KEY를 확인하세요.');
-    }
-
-    this.ai = new GoogleGenAI({ apiKey: effectiveKey || '' });
-    
+  constructor(_apiKey?: string, requestsPerMinute: number = 10) {
     this.requestsPerMinute = requestsPerMinute;
     this.delayBetweenRequests = requestsPerMinute > 0 ? 60000 / requestsPerMinute : 0;
 
-    console.log(`GeminiClient 초기화 완료. RPM: ${requestsPerMinute}`);
+    console.log(`GeminiClient 초기화 완료 (Server Proxy). RPM: ${requestsPerMinute}`);
+  }
+
+  /**
+   * 서버 엔드포인트 POST 호출 헬퍼
+   */
+  private async postApi(endpoint: string, payload: Record<string, any>): Promise<any> {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const errMessage = data?.error?.message || `HTTP Error ${response.status}`;
+      const err = new Error(errMessage) as any;
+      err.status = data?.error?.status || response.status;
+      if (data?.error?.details) {
+        err.details = data.error.details;
+      }
+      throw err;
+    }
+
+    return data;
   }
 
   /**
@@ -574,7 +589,7 @@ export class GeminiClient {
     const effectiveSystemInstruction = pdfRequest ? pdfRequest.systemInstruction : systemInstruction;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.postApi('/api/gemini/generate-content', {
         model: modelName,
         contents: pdfRequest ? pdfRequest.contents : prompt,
         config: {
@@ -588,7 +603,7 @@ export class GeminiClient {
           ...(effectiveSystemInstruction && { systemInstruction: effectiveSystemInstruction }),
           safetySettings: DEFAULT_SAFETY_SETTINGS,
           ...(thinkingConfig && { thinkingConfig }),
-          ...(pdfRequest && { mediaResolution: MediaResolution.MEDIA_RESOLUTION_LOW }),
+          ...(pdfRequest && { mediaResolution: MEDIA_RESOLUTION_LOW }),
         },
       });
 
@@ -634,7 +649,7 @@ export class GeminiClient {
       }
       base64Image = btoa(base64Image);
 
-      const response = await this.ai.models.generateContent({
+      const response = await this.postApi('/api/gemini/generate-content', {
         model: modelName,
         contents: [
           {
@@ -738,7 +753,7 @@ export class GeminiClient {
       // 5-a. PDF 입력: 채팅 세션 대신 히스토리를 contents로 펼쳐 한 번에 보낸다
       if (config?.pdfInput?.enabled) {
         const pdfRequest = buildPdfRequest(messageToSend, systemInstruction, chatHistory, config.pdfInput);
-        const pdfResponse = await this.ai.models.generateContent({
+        const pdfResponse = await this.postApi('/api/gemini/generate-content', {
           model: modelName,
           contents: pdfRequest.contents,
           config: {
@@ -751,7 +766,7 @@ export class GeminiClient {
             responseSchema: config?.responseJsonSchema,
             safetySettings: DEFAULT_SAFETY_SETTINGS,
             ...(thinkingConfig && { thinkingConfig }),
-            mediaResolution: MediaResolution.MEDIA_RESOLUTION_LOW,
+            mediaResolution: MEDIA_RESOLUTION_LOW,
           },
         });
         const pdfText = pdfResponse.text;
@@ -761,8 +776,8 @@ export class GeminiClient {
         return pdfText || '';
       }
 
-      // 5. 채팅 세션 생성
-      const chat = this.ai.chats.create({
+      // 5. 채팅 세션 호출
+      const response = await this.postApi('/api/gemini/generate-chat', {
         model: modelName,
         config: {
           temperature: config?.temperature ?? 0.7,
@@ -779,10 +794,9 @@ export class GeminiClient {
           role: msg.role,
           parts: [{ text: msg.content }],
         })),
+        message: messageToSend,
       });
 
-      // 6. 메시지 전송
-      const response = await chat.sendMessage({ message: messageToSend });
       const text = response.text;
       
       if (!text && messageToSend.trim()) {
@@ -821,25 +835,73 @@ export class GeminiClient {
     const thinkingConfig = this.getThinkingConfig(modelName, config);
 
     try {
-      const response = await this.ai.models.generateContentStream({
-        model: modelName,
-        contents: prompt,
-        config: {
-          temperature: config?.temperature ?? 0.7,
-          topP: config?.topP ?? 0.9,
-          topK: config?.topK ?? 40,
-          maxOutputTokens: config?.maxOutputTokens ?? 65536,
-          ...(systemInstruction && { systemInstruction }),
-          safetySettings: DEFAULT_SAFETY_SETTINGS,
-          ...(thinkingConfig && { thinkingConfig }),
-        },
+      const response = await fetch('/api/gemini/generate-content-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: modelName,
+          contents: prompt,
+          config: {
+            temperature: config?.temperature ?? 0.7,
+            topP: config?.topP ?? 0.9,
+            topK: config?.topK ?? 40,
+            maxOutputTokens: config?.maxOutputTokens ?? 65536,
+            ...(systemInstruction && { systemInstruction }),
+            safetySettings: DEFAULT_SAFETY_SETTINGS,
+            ...(thinkingConfig && { thinkingConfig }),
+          },
+        }),
       });
 
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        const errMessage = data?.error?.message || `HTTP Error ${response.status}`;
+        const err = new Error(errMessage) as any;
+        err.status = data?.error?.status || response.status;
+        if (data?.error?.details) {
+          err.details = data.error.details;
+        }
+        throw err;
+      }
+
+      if (!response.body) {
+        throw new Error('스트리밍 응답 본문이 없습니다.');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
       let fullText = '';
-      for await (const chunk of response) {
-        const chunkText = chunk.text || '';
-        fullText += chunkText;
-        onChunk?.(chunkText);
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payloadStr = trimmed.slice(5).trim();
+          if (!payloadStr) continue;
+
+          const parsed = JSON.parse(payloadStr);
+          if (parsed.error) {
+            const err = new Error(parsed.error.message || 'Streaming error') as any;
+            err.status = parsed.error.status;
+            err.details = parsed.error.details;
+            throw err;
+          }
+          if (parsed.done) {
+            break;
+          }
+          if (typeof parsed.text === 'string') {
+            fullText += parsed.text;
+            onChunk?.(parsed.text);
+          }
+        }
       }
 
       return fullText;
@@ -871,34 +933,17 @@ export class GeminiClient {
   }
 
   /**
-   * models.list()를 순회해 조건에 맞는 모델명만 돌려준다 (실패하면 빈 배열)
+   * 모델 목록 API를 조회해 조건에 맞는 모델명만 돌려준다 (실패하면 빈 배열)
    */
   private async listModelNames(predicate: (name: string) => boolean): Promise<string[]> {
     try {
-      const response = await this.ai.models.list();
-      const models: string[] = [];
-      let modelList: any[] = [];
-
-      if (response && typeof response === 'object') {
-        if (Array.isArray(response)) {
-          modelList = response;
-        } else if ('models' in response && Array.isArray((response as any).models)) {
-          modelList = (response as any).models;
-        } else if (Symbol.asyncIterator in response) {
-          for await (const model of response as any) {
-            modelList.push(model);
-          }
-        }
+      const response = await fetch('/api/gemini/models');
+      if (!response.ok) {
+        return [];
       }
-
-      for (const model of modelList) {
-        const name = typeof model?.name === 'string' ? model.name.replace(/^models\//, '') : '';
-        if (name && predicate(name)) {
-          models.push(name);
-        }
-      }
-
-      return models;
+      const data = await response.json();
+      const modelList: string[] = Array.isArray(data?.models) ? data.models : [];
+      return modelList.filter((name) => typeof name === 'string' && predicate(name));
     } catch (error) {
       console.error('모델 목록 조회 실패:', error);
       return [];
@@ -946,7 +991,7 @@ export class GeminiClient {
     };
 
     const callApi = async (responseModalities: string[]) =>
-      this.ai.models.generateContent({
+      this.postApi('/api/gemini/generate-content', {
         model: params.model,
         contents: [{ role: 'user', parts }],
         config: { ...baseConfig, responseModalities },
